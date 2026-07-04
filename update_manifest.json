@@ -5,6 +5,7 @@
   "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.3.0/BlackCatAuditAssistant_Setup_4.3.0.zip",
   "package_sha256": "0a6152e1c3e362336669082e3fe6de55eb66cf0666c802eb1399fde611151553",
   "mandatory": false,
+  "published_at": "2026-07-05T08:15:15+08:00",
   "release_notes": [
     "扫码验单正式发布，支持导入包含出库单号、SKU、数量的 Excel。",
     "扫码流程为先扫出库单号，再扫 SKU；匹配成功放行，异常立即拦截。",
