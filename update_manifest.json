@@ -1,15 +1,14 @@
 {
-  "latest_version": "4.2.0",
-  "message": "黑猫审单助手 4.2.0 正式发布。",
+  "latest_version": "4.3.0",
+  "message": "正式版 4.3.0：扫码验单功能发布，支持 Excel 导入、先扫出库单号再扫 SKU、匹配成功放行、异常拦截、声音提示区分和异常记录导出。",
   "manifest_url": "https://super-hamburger.github.io/blackcat-audit-assistant/update_manifest.json",
-  "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.2.0/BlackCatAuditAssistant_Setup_4.2.0.zip",
-  "package_sha256": "69d5363e8e8e580a4656aff2cf330c71c991e5f1bbca7f9d35768343a579a0e4",
+  "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.3.0/BlackCatAuditAssistant_Setup_4.3.0.zip",
+  "package_sha256": "0a6152e1c3e362336669082e3fe6de55eb66cf0666c802eb1399fde611151553",
   "mandatory": false,
   "release_notes": [
-    "4.1.7-test 转为 4.2.0 正式发布版",
-    "增强黑猫/Yamato 面单识别置信度策略",
-    "新增 recognition_report.csv 和低置信度页面待检查输出",
-    "保留 GitHub Pages 远程更新清单能力",
-    "发布包包含 file_paste、label_compress、updater 和完整更新日志"
+    "扫码验单正式发布，支持导入包含出库单号、SKU、数量的 Excel。",
+    "扫码流程为先扫出库单号，再扫 SKU；匹配成功放行，异常立即拦截。",
+    "新增扫码匹配成功专用短提示音，和输入点击音、异常报警声区分。",
+    "异常记录支持导出 CSV。"
   ]
 }
