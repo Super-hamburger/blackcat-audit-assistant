@@ -1,15 +1,14 @@
 {
-  "latest_version": "4.3.0",
-  "message": "正式版 4.3.0：扫码验单功能发布，支持 Excel 导入、先扫出库单号再扫 SKU、匹配成功放行、异常拦截、声音提示区分和异常记录导出。",
+  "latest_version": "4.3.1",
+  "message": "正式版 4.3.1：修复关闭到系统托盘后再次从桌面打开会启动第二个程序本体的问题；再次打开会唤醒已有窗口。",
   "manifest_url": "https://super-hamburger.github.io/blackcat-audit-assistant/update_manifest.json",
-  "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.3.0/BlackCatAuditAssistant_Setup_4.3.0.zip",
-  "package_sha256": "0a6152e1c3e362336669082e3fe6de55eb66cf0666c802eb1399fde611151553",
+  "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.3.1/BlackCatAuditAssistant_Setup_4.3.1.zip",
+  "package_sha256": "500ef4042713f618a1b370a93e78884ab7be3b1120fb9b800820b644a850a78a",
   "mandatory": false,
-  "published_at": "2026-07-05T08:15:15+08:00",
+  "published_at": "2026-07-07T23:50:00+08:00",
   "release_notes": [
-    "扫码验单正式发布，支持导入包含出库单号、SKU、数量的 Excel。",
-    "扫码流程为先扫出库单号，再扫 SKU；匹配成功放行，异常立即拦截。",
-    "新增扫码匹配成功专用短提示音，和输入点击音、异常报警声区分。",
-    "异常记录支持导出 CSV。"
+    "修复关闭窗口最小化到系统托盘后，再次双击桌面快捷方式会创建第二个运行实例的问题。",
+    "再次打开软件时会通知已运行实例恢复主窗口，不再生成新的托盘图标。",
+    "保留托盘菜单的打开主窗口、检查更新和退出软件能力。"
   ]
 }
