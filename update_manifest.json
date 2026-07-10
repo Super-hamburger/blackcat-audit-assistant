@@ -1,14 +1,14 @@
 {
-  "latest_version": "4.3.1",
-  "message": "正式版 4.3.1：修复关闭到系统托盘后再次从桌面打开会启动第二个程序本体的问题；再次打开会唤醒已有窗口。",
+  "latest_version": "4.4.0",
+  "message": "正式版 4.4.0：扫码验单支持导出完整未匹配源数据；异常记录导出 Excel；新增后台自动检查更新和托盘新版本通知。",
   "manifest_url": "https://super-hamburger.github.io/blackcat-audit-assistant/update_manifest.json",
-  "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.3.1/BlackCatAuditAssistant_Setup_4.3.1.zip",
-  "package_sha256": "500ef4042713f618a1b370a93e78884ab7be3b1120fb9b800820b644a850a78a",
+  "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.4.0/BlackCatAuditAssistant_Setup_4.4.0.zip",
+  "package_sha256": "a163a1569e41cc861054161d5800dbf8ed3decd2dcd1892eb82a7bbea735d522",
   "mandatory": false,
-  "published_at": "2026-07-07T23:50:00+08:00",
+  "published_at": "2026-07-10T00:10:00+08:00",
   "release_notes": [
-    "修复关闭窗口最小化到系统托盘后，再次双击桌面快捷方式会创建第二个运行实例的问题。",
-    "再次打开软件时会通知已运行实例恢复主窗口，不再生成新的托盘图标。",
-    "保留托盘菜单的打开主窗口、检查更新和退出软件能力。"
+    "扫码验单仅核验数量为 1 的源数据，并可导出完整未匹配源数据。",
+    "异常记录改为 Excel 导出，保留完整源数据行和异常追溯信息。",
+    "设置页新增后台自动检查更新、托盘新版本通知和立即更新入口。"
   ]
 }
