@@ -1,12 +1,14 @@
 from pathlib import Path
 from datetime import datetime
 import os
+import re
+import unicodedata
 
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
-from modules.file_paste.address_splitter import split_delivery_address
+from modules.file_paste.address_splitter import split_delivery_address_cells
 from core.file_safe import ensure_writable_dir
 
 
@@ -114,6 +116,27 @@ def split_item_text(value):
     return value[:50], value[50:100]
 
 
+def normalize_digits(value):
+    return unicodedata.normalize("NFKC", value)
+
+
+def shelf_sort_key(value):
+    value = norm(value)
+    if not value:
+        return (2,)
+
+    if re.match(r"^[0-9０-９]", value):
+        parts = re.split(r"[-－]", value)
+        if all(re.fullmatch(r"[0-9０-９]+", part) for part in parts):
+            return (0, tuple(int(normalize_digits(part)) for part in parts))
+        return (2,)
+
+    if re.match(r"^[A-Za-z]", value):
+        return (1, value.casefold())
+
+    return (2,)
+
+
 class UploadConverter:
     def convert(self, source_path, output_dir, open_after=True):
         source_path = Path(source_path)
@@ -152,27 +175,34 @@ class UploadConverter:
         item_split_count = 0
         missing_count = 0
 
-        for source_row in ws.iter_rows(min_row=2):
-            data = row_reader(source_row, header_map)
+        source_rows = [row_reader(source_row, header_map) for source_row in ws.iter_rows(min_row=2)]
+        if source_type == "一件代发表格":
+            source_rows.sort(key=lambda data: shelf_sort_key(data["shelf"]))
+
+        for data in source_rows:
             if not data["reference"]:
                 continue
 
-            address_l, address_m = split_delivery_address(
+            address = split_delivery_address_cells(
                 data["prefecture"],
                 data["city"],
                 data["street"],
                 data["apartment"],
             )
 
-            original_main = data["prefecture"] + data["city"] + data["street"]
-            address_was_split = bool(address_m and original_main != address_l)
+            address_was_split = any(address[column] for column in ("M", "N", "O"))
             if address_was_split:
                 split_count += 1
 
-            item1, item2 = split_item_text(data["item_name"])
+            item_text = data["item_name"]
+            if source_type == "一件代发表格":
+                item_text = f'{data["sku"]}*1' if data["sku"] else "*1"
+            item1, item2 = split_item_text(item_text)
             item_was_split = bool(item2)
             if item_was_split:
                 item_split_count += 1
+
+            company_value = "" if address["O"] else data["company"]
 
             values = {
                 "A": data["reference"],
@@ -180,16 +210,17 @@ class UploadConverter:
                 "E": datetime.now().strftime("%Y%m%d"),
                 "I": data["phone"],
                 "K": data["postal"],
-                "L": address_l,
-                "M": address_m,
-                "N": data["company"],
+                "L": address["L"],
+                "M": address["M"],
+                "N": address["N"],
+                "O": address["O"] or company_value,
                 "P": data["recipient"],
                 "R": "様",
                 "T": data["sender_phone"] or "050-1724-5220",
                 "V": "590-0533",
                 "W": "大阪府泉南市中小路2-780",
                 "Y": "祺商倉庫発送",
-                "AB": data["sku"],
+                "AB": data["shelf"] if source_type == "一件代发表格" else data["sku"],
                 "AD": item1 or "*1",
                 "AF": item2,
                 "AJ": "0",
@@ -204,8 +235,11 @@ class UploadConverter:
 
             # Core Intelligence marking in the final file.
             if address_was_split:
-                out_ws[f"L{row_no}"].fill = MARK_ADDRESS_SPLIT
-                out_ws[f"M{row_no}"].fill = MARK_ADDRESS_SPLIT
+                for col_letter in ("L", "M", "N", "O"):
+                    if not address[col_letter]:
+                        continue
+                    fill = MARK_MISSING_REQUIRED if col_letter == "O" and address["overflow"] else MARK_ADDRESS_SPLIT
+                    out_ws[f"{col_letter}{row_no}"].fill = fill
                 out_ws[f"M{row_no}"].comment = None
 
             if item_was_split:
@@ -217,7 +251,7 @@ class UploadConverter:
                 missing_required.append("I")
             if not data["postal"]:
                 missing_required.append("K")
-            if not address_l:
+            if not address["L"]:
                 missing_required.append("L")
             if not data["recipient"]:
                 missing_required.append("P")
@@ -238,16 +272,6 @@ class UploadConverter:
             out_ws.column_dimensions[letter].width = width
 
         out_ws.freeze_panes = "A2"
-
-        legend_row = row_no + 2
-        out_ws[f"A{legend_row}"] = "颜色说明"
-        out_ws[f"A{legend_row}"].font = Font(bold=True)
-        out_ws[f"B{legend_row}"] = "黄色：地址自动拆分到 L/M 列"
-        out_ws[f"B{legend_row}"].fill = MARK_ADDRESS_SPLIT
-        out_ws[f"C{legend_row}"] = "红色：关键字段为空"
-        out_ws[f"C{legend_row}"].fill = MARK_MISSING_REQUIRED
-        out_ws[f"D{legend_row}"] = "绿色：明细过长自动拆分"
-        out_ws[f"D{legend_row}"].fill = MARK_ITEM_SPLIT
 
         output_path = output_dir / f"黑猫上传表_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         out_wb.save(output_path)
@@ -277,6 +301,7 @@ class UploadConverter:
             "company": read(row, header_map, "收件公司"),
             "recipient": read(row, header_map, "收件人"),
             "sender_phone": "",
+            "shelf": read(row, header_map, "货架") or read(row, header_map, "货位"),
             "sku": read(row, header_map, "SKU"),
             "item_name": "*1",
         }
@@ -300,6 +325,7 @@ class UploadConverter:
             "company": "",
             "recipient": read(row, header_map, "收件姓名"),
             "sender_phone": read(row, header_map, "发件人电话"),
+            "shelf": "",
             "sku": read(row, header_map, "sku"),
             "item_name": read(row, header_map, "明细"),
         }
