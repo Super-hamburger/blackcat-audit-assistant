@@ -8,7 +8,7 @@ from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
-from modules.file_paste.address_splitter import split_delivery_address_cells
+from modules.file_paste.address_splitter import split_delivery_address, split_delivery_address_cells
 from core.file_safe import ensure_writable_dir
 
 
@@ -183,14 +183,27 @@ class UploadConverter:
             if not data["reference"]:
                 continue
 
-            address = split_delivery_address_cells(
-                data["prefecture"],
-                data["city"],
-                data["street"],
-                data["apartment"],
-            )
+            if source_type == "一件代发表格":
+                address = split_delivery_address_cells(
+                    data["prefecture"],
+                    data["city"],
+                    data["street"],
+                    data["apartment"],
+                )
+                address_was_split = any(address[column] for column in ("M", "N", "O"))
+                company_value = "" if address["O"] else data["company"]
+            else:
+                address_l, address_m = split_delivery_address(
+                    data["prefecture"],
+                    data["city"],
+                    data["street"],
+                    data["apartment"],
+                )
+                address = {"L": address_l, "M": address_m, "N": data["company"], "O": ""}
+                original_main = data["prefecture"] + data["city"] + data["street"]
+                address_was_split = bool(address_m and original_main != address_l)
+                company_value = ""
 
-            address_was_split = any(address[column] for column in ("M", "N", "O"))
             if address_was_split:
                 split_count += 1
 
@@ -201,8 +214,6 @@ class UploadConverter:
             item_was_split = bool(item2)
             if item_was_split:
                 item_split_count += 1
-
-            company_value = "" if address["O"] else data["company"]
 
             values = {
                 "A": data["reference"],
@@ -235,12 +246,17 @@ class UploadConverter:
 
             # Core Intelligence marking in the final file.
             if address_was_split:
-                for col_letter in ("L", "M", "N", "O"):
-                    if not address[col_letter]:
-                        continue
-                    fill = MARK_MISSING_REQUIRED if col_letter == "O" and address["overflow"] else MARK_ADDRESS_SPLIT
-                    out_ws[f"{col_letter}{row_no}"].fill = fill
-                out_ws[f"M{row_no}"].comment = None
+                if source_type == "一件代发表格":
+                    for col_letter in ("L", "M", "N", "O"):
+                        if not address[col_letter]:
+                            continue
+                        fill = MARK_MISSING_REQUIRED if col_letter == "O" and address["overflow"] else MARK_ADDRESS_SPLIT
+                        out_ws[f"{col_letter}{row_no}"].fill = fill
+                    out_ws[f"M{row_no}"].comment = None
+                else:
+                    out_ws[f"L{row_no}"].fill = MARK_ADDRESS_SPLIT
+                    out_ws[f"M{row_no}"].fill = MARK_ADDRESS_SPLIT
+                    out_ws[f"M{row_no}"].comment = None
 
             if item_was_split:
                 out_ws[f"AD{row_no}"].fill = MARK_ITEM_SPLIT

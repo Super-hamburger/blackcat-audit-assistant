@@ -185,5 +185,31 @@ def split_delivery_address_cells(prefecture, city, street, apartment):
 
 
 def split_delivery_address(prefecture, city, street, apartment):
-    cells = split_delivery_address_cells(prefecture, city, street, apartment)
-    return cells["L"], cells["M"]
+    prefecture = normalize_text(prefecture)
+    city = normalize_text(city)
+    street = compact_spaces(street)
+    apartment = compact_spaces(apartment)
+
+    street_main, street_building = find_building_split(street)
+    main_address = f"{prefecture}{city}{street_main}"
+    building_address = " ".join(
+        part for part in [street_building, apartment] if part
+    ).strip()
+
+    if len(main_address) <= MAIN_ADDRESS_LIMIT:
+        return main_address, building_address
+
+    town_left, block_right = split_town_and_block(main_address)
+    if block_right and len(town_left) >= 8:
+        combined_building = " ".join(
+            part for part in [block_right, building_address] if part
+        ).strip()
+        return town_left, combined_building
+
+    split_at = preferred_split_index(main_address, MAIN_ADDRESS_LIMIT)
+    left = main_address[:split_at].strip()
+    overflow = main_address[split_at:].strip()
+    combined_building = " ".join(
+        part for part in [overflow, building_address] if part
+    ).strip()
+    return left, combined_building

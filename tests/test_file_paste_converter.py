@@ -192,7 +192,7 @@ class UploadConverterTest(unittest.TestCase):
 
             self.assertEqual(sheet.max_row, 3)
 
-    def test_new_blackcat_keeps_existing_ab_ad_mapping_and_item_split_marking(self):
+    def test_new_blackcat_keeps_legacy_address_placement_and_item_mapping(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "new-blackcat.xlsx"
             headers = NEW_BLACKCAT_HEADERS + ["备注"]
@@ -202,8 +202,8 @@ class UploadConverterTest(unittest.TestCase):
                     "单号": "NB-1",
                     "收件人电话": "09012345678",
                     "收件邮编": "1050011",
-                    "收件地址": "東京都港区芝公園1-2-3",
-                    "详细地址": "東京タワー101",
+                    "收件地址": "東京都世田谷区北沢二丁目24-5-101",
+                    "详细地址": "サンライズマンション千歳船橋 101号室",
                     "收件姓名": "王五",
                     "发件人电话": "0312345678",
                     "sku": "SKU-NB",
@@ -216,6 +216,14 @@ class UploadConverterTest(unittest.TestCase):
             result, sheet = self.convert_and_load(source_path, temp_dir)
 
             self.assertEqual(result["source_type"], "黑猫新版表格")
+            self.assertEqual(sheet["L2"].value, "東京都世田谷区北沢二丁目")
+            self.assertEqual(sheet["M2"].value, "24-5-101 サンライズマンション千歳船橋 101号室")
+            self.assertIsNone(sheet["N2"].value)
+            self.assertIsNone(sheet["O2"].value)
+            self.assert_fill_color(sheet["L2"], MARK_ADDRESS_SPLIT)
+            self.assert_fill_color(sheet["M2"], MARK_ADDRESS_SPLIT)
+            self.assertIsNone(sheet["N2"].fill.patternType)
+            self.assertIsNone(sheet["O2"].fill.patternType)
             self.assertEqual(sheet["AB2"].value, "SKU-NB")
             self.assertEqual(sheet["AD2"].value, "X" * 50)
             self.assertEqual(sheet["AF2"].value, "X" * 5)
