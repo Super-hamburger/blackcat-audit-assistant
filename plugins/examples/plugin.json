@@ -1,0 +1,7 @@
+{
+  "id": "example_plugin",
+  "name": "Example Plugin",
+  "version": "1.0.0",
+  "entry": "plugin.py",
+  "description": "插件系统示例。这个插件不会修改核心功能，只用于验证插件架构。"
+}

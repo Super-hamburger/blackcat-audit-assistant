@@ -1,0 +1,8 @@
+{
+  "id": "label_compress",
+  "name_key": "module.label_compress.name",
+  "description_key": "module.label_compress.description",
+  "version": "4.4.0",
+  "enabled": true,
+  "category": "business"
+}

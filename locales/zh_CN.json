@@ -1,0 +1,17 @@
+{
+  "app.name": "黑猫审单助手",
+  "brand": "MADE IN チュウ ビョ",
+  "nav.home": "主页",
+  "nav.file_paste": "文件粘贴",
+  "nav.label_compress": "面单压缩",
+  "nav.history": "处理记录",
+  "nav.statistics": "数据统计",
+  "nav.templates": "收藏模板",
+  "nav.settings": "设置",
+  "nav.help": "帮助文档",
+  "nav.changelog": "更新日志",
+  "nav.about": "关于我们",
+  "stage3.plugins": "插件系统",
+  "stage3.updater": "自动更新",
+  "stage3.i18n": "多语言"
+}

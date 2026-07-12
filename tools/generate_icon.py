@@ -1,0 +1,1 @@
+print("Icon generation placeholder.")

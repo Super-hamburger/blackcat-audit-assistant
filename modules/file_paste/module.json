@@ -1,0 +1,8 @@
+{
+  "id": "file_paste",
+  "name_key": "module.file_paste.name",
+  "description_key": "module.file_paste.description",
+  "version": "4.4.0",
+  "enabled": true,
+  "category": "business"
+}

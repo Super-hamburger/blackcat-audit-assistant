@@ -1,0 +1,36 @@
+RC1 Resource Audit Report
+============================
+Total files: 107
+
+Expected missing:
+- dir: assets/avatar
+- dir: assets/themes
+
+Missing sound references:
+- None
+
+Missing image references:
+- None
+
+Sound files:
+- assets/sounds/file_import.wav
+- assets/sounds/soft_error.wav
+- assets/sounds/ui_click.wav
+- assets/sounds/water_complete.wav
+- assets/sounds/water_drop.wav
+
+Avatar files:
+- assets/avatar/blackcat_avatar.png
+
+Spec includes:
+- assets
+- data
+- locales
+- plugins
+- updater
+
+Compile errors:
+- None
+
+Fix notes:
+- Copied assets/icons/blackcat_avatar.png to assets/avatar/blackcat_avatar.png

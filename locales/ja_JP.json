@@ -1,0 +1,17 @@
+{
+  "app.name": "黒猫審査アシスタント",
+  "brand": "MADE IN チュウ ビョ",
+  "nav.home": "ホーム",
+  "nav.file_paste": "ファイル貼り付け",
+  "nav.label_compress": "送り状圧縮",
+  "nav.history": "処理履歴",
+  "nav.statistics": "統計",
+  "nav.templates": "テンプレート",
+  "nav.settings": "設定",
+  "nav.help": "ヘルプ",
+  "nav.changelog": "更新履歴",
+  "nav.about": "このソフトについて",
+  "stage3.plugins": "プラグイン",
+  "stage3.updater": "自動更新",
+  "stage3.i18n": "多言語"
+}

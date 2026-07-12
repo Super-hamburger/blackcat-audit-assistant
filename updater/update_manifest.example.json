@@ -1,0 +1,13 @@
+{
+  "latest_version": "4.4.0",
+  "message": "正式版 4.4.0：扫码验单支持导出完整未匹配源数据，并新增后台自动更新提醒。",
+  "manifest_url": "https://super-hamburger.github.io/blackcat-audit-assistant/update_manifest.json",
+  "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.4.0/BlackCatAuditAssistant_Setup_4.4.0.zip",
+  "package_sha256": "a163a1569e41cc861054161d5800dbf8ed3decd2dcd1892eb82a7bbea735d522",
+  "mandatory": false,
+  "release_notes": [
+    "扫码验单仅核验数量为 1 的源数据，并可导出完整未匹配源数据。",
+    "异常记录改为 Excel 导出，保留完整源数据行和异常追溯信息。",
+    "设置页新增后台自动更新检查、托盘新版本通知和立即更新入口。"
+  ]
+}
