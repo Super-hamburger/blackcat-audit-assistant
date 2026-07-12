@@ -105,4 +105,67 @@ OK
 
 ## Commit
 
-- Commit SHA: 0b9ed28
+- Commit SHA: 573ee90
+
+## Review Fix: Black Cat Legacy Address Handling
+
+### Regression RED
+
+Command:
+
+```powershell
+& 'C:\Users\Admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' -m unittest tests.test_file_paste_converter -v
+```
+
+Output:
+
+```text
+test_new_blackcat_keeps_legacy_address_placement_and_item_mapping (tests.test_file_paste_converter.UploadConverterTest.test_new_blackcat_keeps_legacy_address_placement_and_item_mapping) ... FAIL
+test_one_piece_allocates_address_columns_marks_overflow_and_uses_company_in_o (tests.test_file_paste_converter.UploadConverterTest.test_one_piece_allocates_address_columns_marks_overflow_and_uses_company_in_o) ... ok
+test_one_piece_uses_shelf_alias_sorts_rows_and_maps_sku_to_ad (tests.test_file_paste_converter.UploadConverterTest.test_one_piece_uses_shelf_alias_sorts_rows_and_maps_sku_to_ad) ... ok
+
+======================================================================
+FAIL: test_new_blackcat_keeps_legacy_address_placement_and_item_mapping (tests.test_file_paste_converter.UploadConverterTest.test_new_blackcat_keeps_legacy_address_placement_and_item_mapping)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\Admin\Desktop\BlackCatAuditAssistant\BlackCatAuditAssistant_Temp_Workspace_FilePaste_4_4_1\tests\test_file_paste_converter.py", line 220, in test_new_blackcat_keeps_legacy_address_placement_and_item_mapping
+    self.assertEqual(sheet["M2"].value, "24-5-101 サンライズマンション千歳船橋 101号室")
+AssertionError: '24-5-101' != '24-5-101 サンライズマンション千歳船橋 101号室'
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.325s
+
+FAILED (failures=1)
+```
+
+### Fix
+
+- Restored the original two-cell `split_delivery_address()` behavior for Black Cat imports.
+- Kept `split_delivery_address_cells()` and its `L/M/N/O` overflow behavior exclusive to one-piece imports.
+- Restored Black Cat yellow marking to `L/M` only; `N/O` remain unused for address content.
+- Expanded the Black Cat regression to use a long `收件地址` and `详细地址`, while retaining AB/AD/AF and item-split assertions.
+
+### Regression GREEN
+
+Command:
+
+```powershell
+& 'C:\Users\Admin\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' -m unittest tests.test_file_paste_converter -v
+```
+
+Output:
+
+```text
+test_new_blackcat_keeps_legacy_address_placement_and_item_mapping (tests.test_file_paste_converter.UploadConverterTest.test_new_blackcat_keeps_legacy_address_placement_and_item_mapping) ... ok
+test_one_piece_allocates_address_columns_marks_overflow_and_uses_company_in_o (tests.test_file_paste_converter.UploadConverterTest.test_one_piece_allocates_address_columns_marks_overflow_and_uses_company_in_o) ... ok
+test_one_piece_uses_shelf_alias_sorts_rows_and_maps_sku_to_ad (tests.test_file_paste_converter.UploadConverterTest.test_one_piece_uses_shelf_alias_sorts_rows_and_maps_sku_to_ad) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.270s
+
+OK
+```
+
+### Review Fix Commit
+
+- Commit SHA: c89860d (`Restore legacy Black Cat address handling`)
