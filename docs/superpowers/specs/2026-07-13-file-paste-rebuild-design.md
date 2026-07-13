@@ -1,126 +1,101 @@
-# File Paste Rebuild Design
+# 文件粘贴功能重建规格
 
-## Goal
+## 目标
 
-Rebuild the file-paste conversion path from the supplied workbooks, without
-carrying forward the previous file-paste mapping rules. Both supported source
-formats must produce a Black Cat upload workbook whose first-row header,
-column order, and column count exactly match
-`0713-黑猫宅急便模版（泉南仓库）(100) (改1).xlsx`.
+以用户提供的三种样表为唯一依据，重新开发文件粘贴转换功能，不沿用旧版文件粘贴的字段对应关系。
 
-The existing 4.4.0 to 4.4.1 changes outside this feature remain intact.
+两种原始表都必须生成黑猫可上传的成品表。成品表的表头、列数、列顺序必须与
+`0713-黑猫宅急便模版（泉南仓库）(100) (改1).xlsx` 完全一致，不能随意调整。
 
-## Inputs and Detection
+除文件粘贴功能以外，4.4.0 到 4.4.1 已有的更新必须保留。
 
-The converter supports exactly two source layouts, recognized from their
-headers rather than their filenames:
+## 原始表识别
 
-| Source layout | Identity field | Source-specific fields |
+程序不依赖文件名，而是根据表头自动识别以下两种表：
+
+| 原始表类型 | 订单号字段 | 主要字段 |
 | --- | --- | --- |
-| `0713-黑猫新版(100).xlsx` | `单号` | recipient address, detailed address, `sku`, `明细` |
-| `202607137740一件代发.xlsx` | `参考单号` | `SKU`, `数量`, `货架`, address parts |
+| 黑猫新版表 | `单号` | 收件地址、详细地址、`sku`、`明细` |
+| 一件代表 | `参考单号` | `SKU`、`数量`、`货架`、分段地址 |
 
-Rows without an identity value are ignored. Any other layout is rejected with
-a clear message that lists the required identifying headers.
+订单号为空的空白行忽略。无法识别的表格要明确提示缺少哪些必要表头。
 
-## Output Template
+## 成品表模板
 
-The application will ship a canonical Black Cat template derived from the
-usable `(改1)` workbook. Conversion starts by copying that template, clearing
-only data rows, and then populating the known output fields. This avoids
-reconstructing a partial header list in code and preserves all 98 columns in
-their required positions.
+程序内置一份根据可用“改1”成品表制作的黑猫模板。每次生成时先复制该模板，再清除旧数据并写入新数据。这样可以保证完整保留 98 列表头、列顺序和固定格式，而不是在代码里临时拼出一部分表头。
 
-The output keeps the target's fixed sender/default values. The output date is
-the conversion date in `yyyyMMdd` form. Text identifiers such as order IDs,
-telephone numbers, postcodes, SKUs, and shelves are always written as text.
+固定发件人信息沿用可用模板。生成日期采用当天的 `yyyyMMdd` 格式。订单号、电话、邮编、SKU、货架等字段必须按文本写入，防止 Excel 自动改写内容。
 
-## Common Recipient Address Allocation
+## 两种表共用的日本地址智能拆分
 
-Both source formats use the same address allocator:
+黑猫新版表将 `收件地址` 和 `详细地址` 合并；一件代表将 `州`、`城市`、`地址`、`地址2` 合并。合并后使用同一套日本地址拆分逻辑写入 L、M、N、O 列。
 
-1. Build one recipient address string. The Black Cat source uses `收件地址`
-   followed by `详细地址`; the one-piece source uses `州`, `城市`, `地址`, and
-   `地址2`.
-2. Split that string left to right into L, M, N, and O, respecting these
-   third-party limits: L no more than 12 full-width characters; M no more than
-   16; N and O no more than 25 each.
-3. Measure a full-width character as one unit and a half-width character as
-   half a unit. Prefer natural boundaries (spaces and address separators),
-   but never exceed a column limit in order to keep a longer word together.
-4. If the whole address cannot fit in L:O, fail that conversion with the order
-   ID and the address length instead of silently truncating an address.
+长度限制如下：
 
-Company data is not written into L:O because those four columns are reserved
-for the recipient address under the usable target layout.
+- L：最多全角 12 个字。
+- M：最多全角 16 个字。
+- N：最多全角 25 个字。
+- O：最多全角 25 个字。
 
-## Product, Quantity, and Shelf Rules
+全角字符按 1 计算，半角字符按 0.5 计算。
 
-For the Black Cat source:
+拆分优先遵守日本地址的实际结构，按以下顺序寻找自然断点：都道府县、市区町村、町名、丁目、番地、号、楼名、房号。不得为了凑长度把 `3丁目`、`1-2-3`、`101号室` 或完整楼名从中间硬拆开。英文或中英文混合楼名优先在空格、连字符等自然位置拆分。
 
-- AB receives `sku` unchanged.
-- AD receives `明细` unchanged, including values such as `*1+*1`.
+如果某一段超过当前列的长度，就继续放到下一列。即使完整地址最终仍超过 O 列的 25 全角字限制，也不能停止生成、不能丢弃文字：超过的剩余内容全部写入 O 列，并把 O 列标记为“地址超长”。生成结果同时返回超长订单数量，方便界面提示用户。
 
-For the one-piece source:
+L 到 O 都只用于收件地址，不再写入收件公司。
 
-- AB receives `货架` unchanged.
-- AD contains a comma-separated SKU/quantity list. Pair the first SKU with
-  the first `*quantity`, the second SKU with the second `*quantity`, and so
-  on: `sku-a,sku-b` plus `*1+*1` becomes `sku-a*1,sku-b*1`.
-- A single SKU with numeric `数量` becomes `sku*数量`.
-- Multiple SKUs with a numeric total equal to the number of SKUs becomes one
-  `*1` entry per SKU.
-- A multiple-SKU row with only a numeric total that does not identify each
-  SKU's individual quantity is rejected. The source does not contain enough
-  information to safely choose between distributions such as `*3+*2`.
+## 商品、数量和货架规则
 
-These rules keep quantities explicit and prevent a plausible but incorrect
-upload when the source has insufficient detail.
+### 黑猫新版表
 
-## One-Piece Shelf Ordering
+- AB 写入原表 `sku`。
+- AD 写入原表 `明细`，例如 `*1+*1`。
+- 黑猫新版表保持原表行顺序。
 
-Only one-piece rows are reordered:
+### 一件代表
 
-1. A row with exactly one shelf location is sortable. Split it on hyphens and
-   compare segments left to right in ascending order.
-2. Numeric segments compare numerically, so `2-1-1-1` precedes `10-1-1-1`.
-   Numeric-leading shelves come before letter-leading shelves.
-3. If earlier segments match, compare the next segment, so
-   `13-3-3-2` precedes `13-6-3-2`.
-4. A shelf cell containing more than one location (for example, a comma
-   separated value) is not compared. Those rows retain their source order and
-   are placed after every single-shelf row.
+- AB 写入原表 `货架`。
+- AD 写入 SKU 和数量合并后的内容。
+- SKU 与数量按顺序一一对应。例如：
+  - SKU：`80jun23nlx084f1a,73may22npolos0951`
+  - 数量明细：`*1+*1`
+  - AD：`80jun23nlx084f1a*1,73may22npolos0951*1`
+- 单个 SKU 且 `数量` 为数字时，输出 `SKU*数量`。
+- 多个 SKU 且总数量刚好等于 SKU 个数时，每个 SKU 输出 `*1`。
+- 多个 SKU 但原表只给了无法分配到各 SKU 的总数量时，程序不猜测数量分配，标记该订单并提示用户确认；仍保留其它订单的生成结果。
 
-Black Cat source rows retain their source order.
+## 一件代表的货架排序
 
-## Implementation Boundaries
+只对一件代表排序：
 
-- Replace the current converter's legacy mappings rather than layering new
-  conditions over them.
-- Separate source readers, address allocation, item/quantity pairing, shelf
-  sorting, and template writing into small testable functions.
-- Keep the existing module entry point and UI workflow unchanged.
-- Retain the currently delivered 4.4.1 changes outside `file_paste`.
+1. 只有一个货架的订单参与排序。货架按 `-` 从左到右逐段升序比较。
+2. 数字按数值比较，`2-1-1-1` 在 `10-1-1-1` 前；数字货架排在字母货架前。
+3. 前一段相同时继续比较后一段，例如 `13-3-3-2` 在 `13-6-3-2` 前。
+4. 一个单元格内有多个货架（如用逗号分隔）的订单不参与货架比较，按原来顺序统一放到所有单货架订单的后面。
 
-## Error Handling
+## 实现范围
 
-The converter must stop before writing an output file when it encounters an
-unsupported source, an overlong recipient address, a missing required identity
-field on an otherwise populated row, or an ambiguous multi-SKU quantity. Its
-message must identify the affected order and the field that needs correction.
+- 用新的、可单独测试的函数分别负责：原始表读取、地址智能拆分、SKU/数量合并、货架排序、模板写入。
+- 替换当前转换器的旧字段规则，不在旧规则上继续打补丁。
+- 文件粘贴模块入口和现有界面操作方式不变。
+- 不影响文件粘贴以外的 4.4.1 功能。
 
-## Verification
+## 异常提示
 
-Focused tests will use small synthetic workbooks plus the supplied examples
-to verify:
+无法识别表格、存在不完整订单号、SKU 数量无法确定等情况，需要在生成结果中显示具体订单号和问题原因。地址超长只做 O 列标记和汇总提示，不能阻止生成。
 
-- exact 98-column target header and order;
-- both source-format mappings;
-- common L/M/N/O address limits;
-- SKU-to-quantity pairing, including `*1+*1`, `*3`, and `*2`;
-- rejection of unresolvable multi-SKU totals;
-- shelf placement in AB and all shelf-ordering rules;
-- multiple-shelf rows at the bottom;
-- preservation of the non-file-paste 4.4.1 behavior.
+## 验证要求
 
-The final build will be packaged and opened for manual testing.
+使用小型测试表和用户提供的样表验证：
+
+- 成品表 98 列表头、列数和顺序完全正确。
+- 两种原始表都能正确取数。
+- 日本地址能按层级智能拆到 L/M/N/O。
+- L、M、N 的长度不超限；O 正常情况不超限，地址无法容纳时保留全部尾部并有超长标记。
+- `*1+*1`、`*3`、`*2` 能与对应 SKU 正确合并。
+- 一件代表的 AB 货架、AD 商品明细和货架排序规则正确。
+- 多货架订单在底部。
+- 文件粘贴以外的 4.4.1 现有功能仍可用。
+
+完成后重新打包并启动软件，供用户手动测试。
