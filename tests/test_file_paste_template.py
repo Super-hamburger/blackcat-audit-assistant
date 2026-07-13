@@ -15,6 +15,10 @@ class UploadTemplateTest(unittest.TestCase):
             "品名２(明细超过半角50字符部分放这列，这列也最多50字符)",
         )
         self.assertEqual(sheet.freeze_panes, "A2")
+        self.assertIn(sheet["R2"].value, ("様", ""))
+        self.assertIn(sheet["S2"].value, (None, ""))
+        self.assertIn(sheet["U2"].value, (None, ""))
+        self.assertIn(sheet["X2"].value, (None, ""))
         workbook.close()
 
 
