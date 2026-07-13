@@ -1,34 +1,25 @@
-# Address L Column Optimization Design
+# 地址 L 列优化设计说明
 
-## Scope
+## 变更范围
 
-Adjust only the file-paste Japanese address allocator. Source recognition,
-template headers, address overflow handling, and shelf sorting remain
-unchanged.
+仅调整文件粘贴功能中的日文地址分配逻辑。不修改原始表识别、成品表表头、地址超长标记、货架排序等其他功能。
 
-## Address Allocation
+## 地址分配规则
 
-- `L` accepts at most 13 full-width characters.
-- `M`, `N`, and `O` keep their existing limits of 16, 25, and 25 full-width
-  characters.
-- `L` begins with the prefecture and municipality information when present:
-  prefecture, city, ward, county, town, or village.
-- After those administrative components, the allocator consumes the following
-  address text up to the remaining L capacity. It may split the next token at
-  the width-safe boundary so that unused L capacity is filled before content
-  moves to M.
-- Content that does not fit in L continues through M, N, and O with the
-  existing semantic token allocation and overflow marking behavior.
+- L 列最多容纳 13 个全角字。
+- M、N、O 列仍分别最多容纳 16、25、25 个全角字。
+- L 列优先放入地址中的行政区划信息：都道府县、市、区、郡、町、村。
+- 放入行政区划后，若 L 列还有空间，继续从后续地址内容中截取并填满 L 列的剩余容量，再将余下内容放入 M 列。
+- 为充分利用 L 列容量，允许在下一个地址词段的宽度安全位置截断；地址字符不得丢失或改变原有顺序。
+- L 列之后的地址仍按现有语义规则依次分配到 M、N、O；超过 O 列容量的内容仍全部保留在 O 列，并标红提示。
 
-## Compatibility
+## 兼容性要求
 
-- Width accounting remains full-width = 1 and ASCII/half-width = 0.5.
-- No address characters may be lost or reordered.
-- Existing M/N/O limits and O-overflow red marking remain unchanged.
+- 字符宽度算法保持不变：全角字符按 1 计算，ASCII/半角字符按 0.5 计算。
+- M、N、O 列的长度上限和现有地址拆分逻辑保持不变。
+- 不得改变货架、SKU、表头或其他文件粘贴功能的行为。
 
-## Verification
+## 验证要求
 
-- Add a focused regression test that proves L contains the prefecture and
-  municipality prefix and is filled to width 13 when additional address text
-  exists.
-- Keep coverage proving M/N/O width limits and O overflow behavior.
+- 增加回归测试，证明 L 列优先包含都道府县和市区郡町村，并在存在后续地址时尽量填满至 13 个全角字。
+- 保留 M、N、O 列长度限制与 O 列超长标红的测试。
