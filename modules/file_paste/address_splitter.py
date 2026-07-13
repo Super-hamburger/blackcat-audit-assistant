@@ -4,6 +4,7 @@ import unicodedata
 MAIN_ADDRESS_LIMIT = 16
 FIRST_ADDRESS_LIMIT = 12
 EXTRA_ADDRESS_LIMIT = 16
+ADDRESS_LIMITS = (12, 16, 25, 25)
 
 BUILDING_KEYWORDS = [
     "マンション", "アパート", "ハイツ", "コーポ", "メゾン", "レジデンス",
@@ -112,6 +113,142 @@ def char_width(value):
 
 def display_width(text):
     return sum(char_width(ch) for ch in text)
+
+
+def _is_ascii_boundary(left, right):
+    if not left or not right:
+        return False
+    return bool(re.match(r"[A-Za-z0-9]$", left) and re.match(r"^[A-Za-z0-9]", right))
+
+
+def _join_address_tokens(left, right):
+    if not left:
+        return right
+    if not right:
+        return left
+    return f"{left} {right}" if _is_ascii_boundary(left, right) else f"{left}{right}"
+
+
+def _split_prefecture(text):
+    match = re.match(r"^(北海道|東京都|(?:京都|大阪)府|.{2,3}県)", text)
+    if not match:
+        return "", text
+    return match.group(1), text[match.end():]
+
+
+def _split_municipalities(text):
+    tokens = []
+    remaining = text
+    while remaining:
+        match = re.match(r"^.+?[市区郡町村]", remaining)
+        if not match:
+            break
+        token = match.group(0)
+        if len(token) < 2:
+            break
+        tokens.append(token)
+        remaining = remaining[match.end():]
+        if len(tokens) == 2:
+            break
+    return tokens, remaining
+
+
+def _split_town_and_number(text):
+    for match in re.finditer(r"[0-9０-９]+", text):
+        if text[match.end():].startswith("丁目"):
+            continue
+        town = text[:match.start()].strip()
+        if town:
+            return town, text[match.start():]
+    return text.strip(), ""
+
+
+def _split_building_and_room(text):
+    text = compact_spaces(text)
+    if not text:
+        return []
+
+    if " " in text:
+        return [part for part in text.split(" ") if part]
+
+    room_match = re.match(r"^(.+?)([0-9０-９]+(?:号室|号|室))$", text)
+    if room_match:
+        return [room_match.group(1), room_match.group(2)]
+
+    return [text]
+
+
+def tokenize_japanese_address(address):
+    text = compact_spaces(address)
+    if not text:
+        return []
+
+    prefecture, remaining = _split_prefecture(text)
+    municipalities, remaining = _split_municipalities(remaining)
+    town, numbered = _split_town_and_number(remaining)
+
+    tokens = [token for token in [prefecture, *municipalities, town] if token]
+    if not numbered:
+        return tokens
+
+    number_match = re.match(
+        r"^([0-9０-９]+(?:[-－ー][0-9０-９]+)*(?:丁目|番地|番|号)?)",
+        numbered,
+    )
+    if number_match:
+        tokens.append(number_match.group(1))
+        numbered = numbered[number_match.end():]
+
+    tokens.extend(_split_building_and_room(numbered))
+    return tokens
+
+
+def _split_long_token(token, limit):
+    left, right = split_by_display_width(token, limit)
+    return [part for part in [left, right] if part]
+
+
+def allocate_tokens(tokens, limits=ADDRESS_LIMITS):
+    values = ["", "", "", ""]
+    column = 0
+
+    for token in tokens:
+        pending = [token]
+        while pending:
+            current = pending.pop(0)
+            candidate = _join_address_tokens(values[column], current)
+
+            if column == 3:
+                values[column] = candidate
+                continue
+
+            if display_width(candidate) <= limits[column]:
+                values[column] = candidate
+                continue
+
+            if not values[column]:
+                parts = _split_long_token(current, limits[column])
+                values[column] = parts.pop(0)
+                pending = parts + pending
+                column += 1
+                continue
+
+            column += 1
+            pending.insert(0, current)
+
+    return values
+
+
+def split_japanese_address(address):
+    values = allocate_tokens(tokenize_japanese_address(address))
+    return {
+        "L": values[0],
+        "M": values[1],
+        "N": values[2],
+        "O": values[3],
+        "overflow": display_width(values[3]) > ADDRESS_LIMITS[3],
+        "was_split": any(values[index] for index in range(1, 4)),
+    }
 
 def candidate_split_points(text, limit):
     candidates = []
