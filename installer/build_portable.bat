@@ -7,7 +7,7 @@ if not exist "%PYTHON_EXE%" (
   pause
   exit /b 1
 )
-"%PYTHON_EXE%" -m PyInstaller --noconfirm --clean --windowed --onedir --name BlackCatAuditAssistant app.py
+"%PYTHON_EXE%" -m PyInstaller --noconfirm --clean BlackCatAuditAssistant.spec
 echo.
 echo 便携版输出位置：dist\BlackCatAuditAssistant
 pause
