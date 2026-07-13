@@ -1950,7 +1950,11 @@ class MainWindow(QMainWindow):
             self.add_excel_log("INFO", f"生成行数: {result['row_count']}")
             self.add_excel_log("INFO", f"地址自动拆分并标黄: {result.get('split_count', 0)} 行")
             self.add_excel_log("INFO", f"关键字段为空并标红: {result.get('missing_count', 0)} 行")
-            self.add_excel_log("INFO", f"明细过长并标绿: {result.get('item_split_count', 0)} 行")
+            self.add_excel_log("INFO", f"地址超长已放入O列并标红: {result.get('address_overflow_count', 0)} 行")
+            self.add_excel_log("INFO", f"SKU数量待确认并标红: {result.get('quantity_issue_count', 0)} 行")
+            quantity_issue_orders = result.get("quantity_issue_orders", [])
+            if quantity_issue_orders:
+                self.add_excel_log("WARNING", "SKU数量待确认订单: " + ", ".join(quantity_issue_orders))
             self.data_manager.add_record({
                 "type": "文件粘贴",
                 "source": str(source),
@@ -1967,7 +1971,7 @@ class MainWindow(QMainWindow):
             show_info(
                 self,
                 "完成",
-                f"黑猫上传表生成完成。\n识别格式：{result.get('source_type', '')}\n生成行数：{result['row_count']}\n黄色标记地址拆分：{result.get('split_count', 0)} 行\n红色标记字段为空：{result.get('missing_count', 0)} 行\n绿色标记明细拆分：{result.get('item_split_count', 0)} 行\n文件：{result['output_path']}\n\n已自动打开生成文件。"
+                f"黑猫上传表生成完成。\n识别格式：{result.get('source_type', '')}\n生成行数：{result['row_count']}\n黄色标记地址拆分：{result.get('split_count', 0)} 行\n红色标记字段为空：{result.get('missing_count', 0)} 行\n地址超长已放入O列：{result.get('address_overflow_count', 0)} 行\nSKU数量待确认：{result.get('quantity_issue_count', 0)} 行\n文件：{result['output_path']}\n\n已自动打开生成文件。"
             )
         except Exception as error:
             self.add_excel_log("ERROR", f"黑猫上传表生成失败: {error}")

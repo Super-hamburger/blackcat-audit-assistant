@@ -119,11 +119,11 @@ def run_self_test(output_path=None):
                 ws = wb.active
                 ws.append([
                     "参考单号", "SKU", "运输方式", "收件人", "收件电话",
-                    "州", "城市", "地址", "地址2", "收件公司", "收件邮编",
+                    "州", "城市", "地址", "地址2", "收件公司", "收件邮编", "数量", "货架",
                 ])
                 ws.append([
                     "SELFTEST001", "SKU001", "宅急便", "山田太郎", "0312345678",
-                    "東京都", "新宿区", "西新宿1-1-1", "101", "SelfTest", "1600023",
+                    "東京都", "新宿区", "西新宿1-1-1", "101", "SelfTest", "1600023", 1, "1-1",
                 ])
                 wb.save(excel_path)
 
@@ -136,7 +136,11 @@ def run_self_test(output_path=None):
                 excel_output = Path(excel_data.get("output_path", ""))
                 record(
                     "run file_paste sample workbook",
-                    excel_result.ok and excel_data.get("row_count") == 1 and excel_output.exists(),
+                    excel_result.ok
+                    and excel_data.get("row_count") == 1
+                    and excel_data.get("address_overflow_count") == 0
+                    and excel_data.get("quantity_issue_count") == 0
+                    and excel_output.exists(),
                     excel_result.message,
                 )
 

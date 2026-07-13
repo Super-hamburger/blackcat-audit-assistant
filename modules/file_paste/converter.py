@@ -163,6 +163,7 @@ class UploadConverter:
 
         split_count = 0
         overflow_count = 0
+        missing_count = 0
         quantity_issue_orders = []
 
         for row_offset, record in enumerate(records):
@@ -219,8 +220,19 @@ class UploadConverter:
             if quantity_issue:
                 output_sheet[f"AD{output_row}"].fill = MARK_QUANTITY_ISSUE
 
-            for column, value in (("I", record["phone"]), ("K", record["postal"]), ("L", address["L"]), ("P", record["recipient"])):
-                if not value:
+            missing_columns = [
+                column
+                for column, value in (
+                    ("I", record["phone"]),
+                    ("K", record["postal"]),
+                    ("L", address["L"]),
+                    ("P", record["recipient"]),
+                )
+                if not value
+            ]
+            if missing_columns:
+                missing_count += 1
+                for column in missing_columns:
                     output_sheet[f"{column}{output_row}"].fill = MARK_MISSING_REQUIRED
 
         output_path = output_dir / f"黑猫上传表_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
@@ -235,6 +247,7 @@ class UploadConverter:
             "output_path": str(output_path),
             "row_count": len(records),
             "split_count": split_count,
+            "missing_count": missing_count,
             "address_overflow_count": overflow_count,
             "quantity_issue_count": len(quantity_issue_orders),
             "quantity_issue_orders": quantity_issue_orders,
