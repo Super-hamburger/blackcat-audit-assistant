@@ -1,46 +1,32 @@
-from pathlib import Path
+from copy import copy
 from datetime import datetime
 import os
+from pathlib import Path
 import re
 import unicodedata
 
-from openpyxl import load_workbook, Workbook
-from openpyxl.styles import Font, PatternFill, Alignment
-from openpyxl.utils import get_column_letter
+from openpyxl.styles import PatternFill
 
-from modules.file_paste.address_splitter import split_delivery_address, split_delivery_address_cells
 from core.file_safe import ensure_writable_dir
+from modules.file_paste.address_splitter import split_japanese_address
+from modules.file_paste.template import load_upload_template
 
-
-OUTPUT_HEADERS = [
-    "お客様管理番号(内部ID)", "送り状種類", "クール区分", "伝票番号",
-    "出荷予定日(发货日期)", "お届け予定（指定）日(配达日期)", "配達時間帯",
-    "お届け先コード", "お届け先電話番号", "お届け先電話番号枝番",
-    "お届け先郵便番号", "お届け先住所", "お届け先住所（アパートマンション名）",
-    "お届け先会社・部門名１", "お届け先会社・部門名２", "お届け先名",
-    "お届け先名略称カナ", "敬称", "ご依頼主コード", "ご依頼主電話番号",
-    "ご依頼主電話番号枝番", "ご依頼主郵便番号", "ご依頼主住所",
-    "ご依頼主住所（アパートマンション名）", "ご依頼主名", "ご依頼主略称カナ",
-    "品名コード１", "品名１(明细半角50字符以内)", "品名コード２",
-    "品名２(明细超过半角50字符部分放这列，这列也最多50字符)", "荷扱い１(商家)",
-    "荷扱い２", "記事", "コレクト代金引換額（税込）", "コレクト内消費税額等",
-    "営業所止置き", "営業所コード", "発行枚数", "個数口枠の印字",
-    "ご請求先顧客コード", "ご請求先分類コード", "運賃管理番号",
-]
 
 ONE_PIECE_HEADERS = [
-    "参考单号", "SKU", "运输方式", "收件人", "收件电话",
-    "州", "城市", "地址", "地址2", "收件公司", "收件邮编"
+    "参考单号", "SKU", "收件人", "收件电话", "州", "城市", "地址", "收件邮编",
 ]
 
 NEW_BLACKCAT_HEADERS = [
     "单号", "收件人电话", "收件邮编", "收件地址", "详细地址",
-    "收件姓名", "发件人电话", "sku", "明细"
+    "收件姓名", "sku", "明细",
 ]
 
-MARK_ADDRESS_SPLIT = PatternFill("solid", fgColor="FFF2CC")  # light yellow
-MARK_MISSING_REQUIRED = PatternFill("solid", fgColor="F4CCCC")  # light red
-MARK_ITEM_SPLIT = PatternFill("solid", fgColor="D9EAD3")  # light green
+MARK_ADDRESS_SPLIT = PatternFill("solid", fgColor="FFF2CC")
+MARK_ADDRESS_OVERFLOW = PatternFill("solid", fgColor="F4CCCC")
+MARK_QUANTITY_ISSUE = PatternFill("solid", fgColor="F4CCCC")
+MARK_MISSING_REQUIRED = PatternFill("solid", fgColor="F4CCCC")
+
+TEXT_COLUMNS = ("A", "I", "K", "L", "M", "N", "O", "P", "AB", "AD")
 
 
 def norm(value):
@@ -67,281 +53,217 @@ def has_headers(header_map, names):
 
 
 def read(row, header_map, name):
-    idx = header_map.get(normalized_header(name))
-    return "" if idx is None else norm(row[idx - 1].value)
+    index = header_map.get(normalized_header(name))
+    return "" if index is None else norm(row[index - 1].value)
 
 
-def ship_code(value):
-    value = norm(value)
-    if "投函" in value:
-        return "A"
-    if "宅急便" in value:
-        return "0"
-    return ""
+def split_skus(value):
+    return [part.strip() for part in re.split(r"[,，]", norm(value)) if part.strip()]
 
 
-def split_pref_city_from_full_address(full_address):
-    full_address = norm(full_address)
-    if not full_address:
-        return "", "", ""
+def resolve_sku_quantities(sku_text, quantity_value):
+    skus = split_skus(sku_text)
+    if not skus:
+        return "", "SKU为空"
 
-    prefecture = ""
-    city = ""
-    street = full_address
+    quantity_text = unicodedata.normalize("NFKC", norm(quantity_value))
+    explicit = re.fullmatch(r"\*(\d+)(?:\+\*(\d+))*", quantity_text)
+    if explicit:
+        amounts = [int(amount) for amount in re.findall(r"\*(\d+)", quantity_text)]
+        if len(amounts) == len(skus):
+            return ",".join(f"{sku}*{amount}" for sku, amount in zip(skus, amounts)), None
+        return "", "SKU数量与数量明细项数不一致"
 
-    for marker in ["都", "道", "府", "県"]:
-        pos = street.find(marker)
-        if 0 < pos <= 4:
-            prefecture = street[:pos + 1]
-            street = street[pos + 1:]
-            break
+    if re.fullmatch(r"\d+", quantity_text):
+        total = int(quantity_text)
+        if len(skus) == 1:
+            return f"{skus[0]}*{total}", None
+        if total == len(skus):
+            return ",".join(f"{sku}*1" for sku in skus), None
+        return "", "多个SKU只有总数量，无法确认每个SKU数量"
 
-    positions = []
-    for marker in ["市", "区", "郡", "町", "村"]:
-        pos = street.find(marker)
-        if pos >= 0:
-            positions.append(pos)
-    if positions:
-        pos = min(positions)
-        city = street[:pos + 1]
-        street = street[pos + 1:]
-
-    return prefecture, city, street
+    return "", "数量格式无法识别"
 
 
-def split_item_text(value):
-    value = norm(value)
-    if len(value) <= 50:
-        return value, ""
-    return value[:50], value[50:100]
+def shelf_sort_key(value, source_index):
+    shelf = norm(value)
+    if not shelf or len(split_skus(shelf)) != 1:
+        return 2, source_index
+
+    parts = re.split(r"[-－]", shelf)
+    if all(re.fullmatch(r"[0-9０-９]+", part) for part in parts):
+        return 0, tuple(int(unicodedata.normalize("NFKC", part)) for part in parts), source_index
+    if re.match(r"^[A-Za-z]", shelf):
+        return 1, shelf.casefold(), source_index
+    return 2, source_index
 
 
-def normalize_digits(value):
-    return unicodedata.normalize("NFKC", value)
+def combine_blackcat_address(record):
+    parts = [record["address"], record["detail_address"]]
+    return " ".join(part for part in parts if part)
 
 
-def shelf_sort_key(value):
-    value = norm(value)
-    if not value:
-        return (2,)
+def combine_one_piece_address(record):
+    main = "".join(record[key] for key in ("prefecture", "city", "street") if record[key])
+    return " ".join(part for part in (main, record["apartment"]) if part)
 
-    if re.match(r"^[0-9０-９]", value):
-        parts = re.split(r"[-－]", value)
-        if all(re.fullmatch(r"[0-9０-９]+", part) for part in parts):
-            return (0, tuple(int(normalize_digits(part)) for part in parts))
-        return (2,)
 
-    if re.match(r"^[A-Za-z]", value):
-        return (1, value.casefold())
+def clone_template_row(sheet, source_row, target_row):
+    for column in range(1, sheet.max_column + 1):
+        source = sheet.cell(source_row, column)
+        target = sheet.cell(target_row, column)
+        target.value = source.value
+        if source.has_style:
+            target._style = copy(source._style)
+        if source.number_format:
+            target.number_format = source.number_format
+        if source.alignment:
+            target.alignment = copy(source.alignment)
 
-    return (2,)
+
+def set_text(sheet, coordinate, value):
+    cell = sheet[coordinate]
+    cell.value = norm(value) if value is not None else None
+    cell.number_format = "@"
 
 
 class UploadConverter:
     def convert(self, source_path, output_dir, open_after=True):
         source_path = Path(source_path)
-        output_dir = ensure_writable_dir(output_dir, 'output')
+        output_dir = ensure_writable_dir(output_dir, "output")
 
-        wb = load_workbook(source_path, data_only=True)
-        ws = wb.worksheets[0]
+        from openpyxl import load_workbook
 
-        header_map = build_header_map(ws)
+        source_book = load_workbook(source_path, data_only=True)
+        source_sheet = source_book.worksheets[0]
+        header_map = build_header_map(source_sheet)
 
         if has_headers(header_map, ONE_PIECE_HEADERS):
             source_type = "一件代发表格"
-            row_reader = self.read_one_piece_row
+            read_row = self.read_one_piece_row
         elif has_headers(header_map, NEW_BLACKCAT_HEADERS):
             source_type = "黑猫新版表格"
-            row_reader = self.read_new_blackcat_row
+            read_row = self.read_new_blackcat_row
         else:
-            raise ValueError(
-                "无法识别表格格式。需要一件代发表格或黑猫新版表格。\n"
-                "一件代发表格需要：参考单号、SKU、运输方式、收件人、收件电话、州、城市、地址、地址2、收件公司、收件邮编\n"
-                "黑猫新版表格需要：单号、收件人电话、收件邮编、收件地址、详细地址、收件姓名、发件人电话、sku、明细"
-            )
+            raise ValueError("无法识别表格格式，需要黑猫新版表或一件代表。")
 
-        out_wb = Workbook()
-        out_ws = out_wb.active
-        out_ws.title = "output"
+        records = []
+        for source_index, row in enumerate(source_sheet.iter_rows(min_row=2), start=0):
+            record = read_row(row, header_map)
+            if record["reference"]:
+                record["source_index"] = source_index
+                records.append(record)
 
-        for col, header in enumerate(OUTPUT_HEADERS, 1):
-            cell = out_ws.cell(1, col, header)
-            cell.font = Font(bold=True, color="FFFFFF")
-            cell.fill = PatternFill("solid", fgColor="1F2937")
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-
-        row_no = 2
-        split_count = 0
-        item_split_count = 0
-        missing_count = 0
-
-        source_rows = [row_reader(source_row, header_map) for source_row in ws.iter_rows(min_row=2)]
         if source_type == "一件代发表格":
-            source_rows.sort(key=lambda data: shelf_sort_key(data["shelf"]))
+            records.sort(key=lambda record: shelf_sort_key(record["shelf"], record["source_index"]))
 
-        for data in source_rows:
-            if not data["reference"]:
-                continue
+        output_book, output_sheet = load_upload_template()
+        if output_sheet.max_row > 2:
+            output_sheet.delete_rows(3, output_sheet.max_row - 2)
 
-            if source_type == "一件代发表格":
-                address = split_delivery_address_cells(
-                    data["prefecture"],
-                    data["city"],
-                    data["street"],
-                    data["apartment"],
-                )
-                address_was_split = any(address[column] for column in ("M", "N", "O"))
-                company_value = "" if address["O"] else data["company"]
-            else:
-                address_l, address_m = split_delivery_address(
-                    data["prefecture"],
-                    data["city"],
-                    data["street"],
-                    data["apartment"],
-                )
-                address = {"L": address_l, "M": address_m, "N": data["company"], "O": ""}
-                original_main = data["prefecture"] + data["city"] + data["street"]
-                address_was_split = bool(address_m and original_main != address_l)
-                company_value = ""
+        split_count = 0
+        overflow_count = 0
+        quantity_issue_orders = []
 
-            if address_was_split:
+        for row_offset, record in enumerate(records):
+            output_row = row_offset + 2
+            if output_row > 2:
+                clone_template_row(output_sheet, 2, output_row)
+
+            address_text = (
+                combine_one_piece_address(record)
+                if source_type == "一件代发表格"
+                else combine_blackcat_address(record)
+            )
+            address = split_japanese_address(address_text)
+            if address["was_split"]:
                 split_count += 1
+            if address["overflow"]:
+                overflow_count += 1
 
-            item_text = data["item_name"]
             if source_type == "一件代发表格":
-                item_text = f'{data["sku"]}*1' if data["sku"] else "*1"
-            item1, item2 = split_item_text(item_text)
-            item_was_split = bool(item2)
-            if item_was_split:
-                item_split_count += 1
+                item_text, quantity_issue = resolve_sku_quantities(
+                    record["sku"], record["quantity"]
+                )
+                ab_value = record["shelf"]
+            else:
+                item_text = record["detail"]
+                quantity_issue = None
+                ab_value = record["sku"]
+
+            if quantity_issue:
+                quantity_issue_orders.append(record["reference"])
 
             values = {
-                "A": data["reference"],
-                "B": data["ship_code"],
+                "A": record["reference"],
                 "E": datetime.now().strftime("%Y%m%d"),
-                "I": data["phone"],
-                "K": data["postal"],
+                "I": record["phone"],
+                "K": record["postal"],
                 "L": address["L"],
                 "M": address["M"],
                 "N": address["N"],
-                "O": address["O"] or company_value,
-                "P": data["recipient"],
-                "R": "様",
-                "T": data["sender_phone"] or "050-1724-5220",
-                "V": "590-0533",
-                "W": "大阪府泉南市中小路2-780",
-                "Y": "祺商倉庫発送",
-                "AB": data["shelf"] if source_type == "一件代发表格" else data["sku"],
-                "AD": item1 or "*1",
-                "AF": item2,
-                "AJ": "0",
-                "AL": "1",
-                "AM": "1",
-                "AN": "08025537182",
-                "AP": "01",
+                "O": address["O"],
+                "P": record["recipient"],
+                "AB": ab_value,
+                "AD": item_text,
             }
+            for column, value in values.items():
+                set_text(output_sheet, f"{column}{output_row}", value)
 
-            for col_letter, value in values.items():
-                out_ws[f"{col_letter}{row_no}"] = str(value)
+            if address["was_split"]:
+                for column in ("L", "M", "N", "O"):
+                    if address[column]:
+                        output_sheet[f"{column}{output_row}"].fill = MARK_ADDRESS_SPLIT
+            if address["overflow"]:
+                output_sheet[f"O{output_row}"].fill = MARK_ADDRESS_OVERFLOW
+            if quantity_issue:
+                output_sheet[f"AD{output_row}"].fill = MARK_QUANTITY_ISSUE
 
-            # Core Intelligence marking in the final file.
-            if address_was_split:
-                if source_type == "一件代发表格":
-                    for col_letter in ("L", "M", "N", "O"):
-                        if not address[col_letter]:
-                            continue
-                        fill = MARK_MISSING_REQUIRED if col_letter == "O" and address["overflow"] else MARK_ADDRESS_SPLIT
-                        out_ws[f"{col_letter}{row_no}"].fill = fill
-                    out_ws[f"M{row_no}"].comment = None
-                else:
-                    out_ws[f"L{row_no}"].fill = MARK_ADDRESS_SPLIT
-                    out_ws[f"M{row_no}"].fill = MARK_ADDRESS_SPLIT
-                    out_ws[f"M{row_no}"].comment = None
-
-            if item_was_split:
-                out_ws[f"AD{row_no}"].fill = MARK_ITEM_SPLIT
-                out_ws[f"AF{row_no}"].fill = MARK_ITEM_SPLIT
-
-            missing_required = []
-            if not data["phone"]:
-                missing_required.append("I")
-            if not data["postal"]:
-                missing_required.append("K")
-            if not address["L"]:
-                missing_required.append("L")
-            if not data["recipient"]:
-                missing_required.append("P")
-            if missing_required:
-                missing_count += 1
-                for col_letter in missing_required:
-                    out_ws[f"{col_letter}{row_no}"].fill = MARK_MISSING_REQUIRED
-
-            row_no += 1
-
-        for row in out_ws.iter_rows():
-            for cell in row:
-                cell.number_format = "@"
-
-        for col in range(1, len(OUTPUT_HEADERS) + 1):
-            letter = get_column_letter(col)
-            width = min(max(len(str(out_ws.cell(1, col).value or "")) + 2, 10), 36)
-            out_ws.column_dimensions[letter].width = width
-
-        out_ws.freeze_panes = "A2"
+            for column, value in (("I", record["phone"]), ("K", record["postal"]), ("L", address["L"]), ("P", record["recipient"])):
+                if not value:
+                    output_sheet[f"{column}{output_row}"].fill = MARK_MISSING_REQUIRED
 
         output_path = output_dir / f"黑猫上传表_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        out_wb.save(output_path)
+        output_book.save(output_path)
+        source_book.close()
+        output_book.close()
 
         if open_after:
             os.startfile(output_path)
 
         return {
             "output_path": str(output_path),
-            "row_count": row_no - 2,
+            "row_count": len(records),
             "split_count": split_count,
-            "item_split_count": item_split_count,
-            "missing_count": missing_count,
+            "address_overflow_count": overflow_count,
+            "quantity_issue_count": len(quantity_issue_orders),
+            "quantity_issue_orders": quantity_issue_orders,
             "source_type": source_type,
         }
 
     def read_one_piece_row(self, row, header_map):
         return {
             "reference": read(row, header_map, "参考单号"),
-            "ship_code": ship_code(read(row, header_map, "运输方式")),
             "phone": read(row, header_map, "收件电话"),
             "postal": read(row, header_map, "收件邮编"),
+            "recipient": read(row, header_map, "收件人"),
             "prefecture": read(row, header_map, "州"),
             "city": read(row, header_map, "城市"),
             "street": read(row, header_map, "地址"),
             "apartment": read(row, header_map, "地址2"),
-            "company": read(row, header_map, "收件公司"),
-            "recipient": read(row, header_map, "收件人"),
-            "sender_phone": "",
-            "shelf": read(row, header_map, "货架") or read(row, header_map, "货位"),
+            "shelf": read(row, header_map, "货架"),
             "sku": read(row, header_map, "SKU"),
-            "item_name": "*1",
+            "quantity": read(row, header_map, "数量"),
         }
 
     def read_new_blackcat_row(self, row, header_map):
-        full_address = read(row, header_map, "收件地址")
-        prefecture, city, street = split_pref_city_from_full_address(full_address)
-
-        remark = read(row, header_map, "备注")
-        derived_ship_code = "A" if "投函" in remark else ("0" if "宅急便" in remark else "")
-
         return {
             "reference": read(row, header_map, "单号"),
-            "ship_code": derived_ship_code,
             "phone": read(row, header_map, "收件人电话"),
             "postal": read(row, header_map, "收件邮编"),
-            "prefecture": prefecture,
-            "city": city,
-            "street": street,
-            "apartment": read(row, header_map, "详细地址"),
-            "company": "",
             "recipient": read(row, header_map, "收件姓名"),
-            "sender_phone": read(row, header_map, "发件人电话"),
-            "shelf": "",
+            "address": read(row, header_map, "收件地址"),
+            "detail_address": read(row, header_map, "详细地址"),
             "sku": read(row, header_map, "sku"),
-            "item_name": read(row, header_map, "明细"),
+            "detail": read(row, header_map, "明细"),
         }
