@@ -82,6 +82,33 @@ class UploadConverterTest(unittest.TestCase):
         self.assertEqual(values[2][29], "sku-a*1,sku-b*1")
         self.assertEqual(result["quantity_issue_count"], 0)
 
+    def test_one_piece_moves_complete_sku_overflow_items_from_ad_to_ac(self):
+        sku_one = "a" * 20
+        sku_two = "b" * 20
+        sku_three = "c" * 20
+        result, values, _ = self.convert_and_load_one_piece([
+            self.one_piece_row(
+                "OVERFLOW",
+                f"{sku_one},{sku_two},{sku_three}",
+                "*1+*1+*1",
+                "1-1",
+            ),
+        ])
+
+        self.assertEqual(values[1][28], f"{sku_three}*1")
+        self.assertEqual(values[1][29], f"{sku_one}*1,{sku_two}*1")
+        self.assertLessEqual(len(values[1][29]), 50)
+        self.assertEqual(result["quantity_issue_count"], 0)
+
+    def test_one_piece_moves_a_single_overlong_sku_item_to_ac(self):
+        long_sku = "x" * 51
+        _, values, _ = self.convert_and_load_one_piece([
+            self.one_piece_row("LONG-SKU", long_sku, 1, "1-1"),
+        ])
+
+        self.assertEqual(values[1][28], f"{long_sku}*1")
+        self.assertIsNone(values[1][29])
+
     def test_blackcat_uses_template_header_sku_and_detail_columns(self):
         result, values = self.convert_and_load_blackcat({
             "单号": "NB-1",

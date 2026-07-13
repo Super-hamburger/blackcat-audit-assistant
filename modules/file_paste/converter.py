@@ -26,7 +26,7 @@ MARK_ADDRESS_OVERFLOW = PatternFill("solid", fgColor="F4CCCC")
 MARK_QUANTITY_ISSUE = PatternFill("solid", fgColor="F4CCCC")
 MARK_MISSING_REQUIRED = PatternFill("solid", fgColor="F4CCCC")
 
-TEXT_COLUMNS = ("A", "I", "K", "L", "M", "N", "O", "P", "AB", "AD")
+TEXT_COLUMNS = ("A", "I", "K", "L", "M", "N", "O", "P", "AB", "AC", "AD")
 
 
 def norm(value):
@@ -83,6 +83,20 @@ def resolve_sku_quantities(sku_text, quantity_value):
         return "", "多个SKU只有总数量，无法确认每个SKU数量"
 
     return "", "数量格式无法识别"
+
+
+def split_item_text_for_ad(item_text, limit=50):
+    items = split_skus(item_text)
+    ad_items = []
+
+    for index, item in enumerate(items):
+        candidate = ",".join([*ad_items, item])
+        if len(candidate) <= limit:
+            ad_items.append(item)
+            continue
+        return ",".join(ad_items), ",".join(items[index:])
+
+    return ",".join(ad_items), ""
 
 
 def shelf_sort_key(value, source_index):
@@ -186,11 +200,13 @@ class UploadConverter:
                 item_text, quantity_issue = resolve_sku_quantities(
                     record["sku"], record["quantity"]
                 )
+                ad_value, ac_value = split_item_text_for_ad(item_text)
                 ab_value = record["shelf"]
             else:
-                item_text = record["detail"]
                 quantity_issue = None
                 ab_value = record["sku"]
+                ac_value = ""
+                ad_value = record["detail"]
 
             if quantity_issue:
                 quantity_issue_orders.append(record["reference"])
@@ -206,7 +222,8 @@ class UploadConverter:
                 "O": address["O"],
                 "P": record["recipient"],
                 "AB": ab_value,
-                "AD": item_text,
+                "AC": ac_value,
+                "AD": ad_value,
             }
             for column, value in values.items():
                 set_text(output_sheet, f"{column}{output_row}", value)
