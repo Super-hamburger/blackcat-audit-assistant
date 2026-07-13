@@ -1,14 +1,14 @@
 {
-  "latest_version": "4.4.0",
-  "message": "正式版 4.4.0：扫码验单支持导出完整未匹配源数据；异常记录导出 Excel；新增后台自动检查更新和托盘新版本通知。",
+  "latest_version": "4.4.1",
+  "message": "正式版 4.4.1：文件粘贴支持两种原始表、日文地址智能拆分、货架排序和多 SKU 自动分列。",
   "manifest_url": "https://super-hamburger.github.io/blackcat-audit-assistant/update_manifest.json",
-  "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.4.0/BlackCatAuditAssistant_Setup_4.4.0.zip",
-  "package_sha256": "a163a1569e41cc861054161d5800dbf8ed3decd2dcd1892eb82a7bbea735d522",
+  "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.4.1/BlackCatAuditAssistant_Setup_4.4.1.zip",
+  "package_sha256": "1af8f11d0b7f349eef3c1b6607bc815a6865f68c0c94f9c6f34545c725298fbc",
   "mandatory": false,
-  "published_at": "2026-07-10T00:10:00+08:00",
+  "published_at": "2026-07-14T01:43:00+08:00",
   "release_notes": [
-    "扫码验单仅核验数量为 1 的源数据，并可导出完整未匹配源数据。",
-    "异常记录改为 Excel 导出，保留完整源数据行和异常追溯信息。",
-    "设置页新增后台自动检查更新、托盘新版本通知和立即更新入口。"
+    "文件粘贴支持黑猫新版表和一件代发表，成品表固定使用 98 列黑猫模板。",
+    "日本地址智能拆分到 L/M/N/O；L 列优先保留行政区划，最多 13 个全角字。",
+    "一件代发表支持货架排序、SKU 数量逐项对应；AD 最多 50 个半角字符，剩余完整 SKU 项自动写入 AC。"
   ]
 }
