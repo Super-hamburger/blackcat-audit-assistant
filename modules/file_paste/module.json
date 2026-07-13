@@ -2,7 +2,7 @@
   "id": "file_paste",
   "name_key": "module.file_paste.name",
   "description_key": "module.file_paste.description",
-  "version": "4.4.1-test",
+  "version": "4.4.1",
   "enabled": true,
   "category": "business"
 }
