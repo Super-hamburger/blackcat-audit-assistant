@@ -4,7 +4,7 @@ import unicodedata
 MAIN_ADDRESS_LIMIT = 16
 FIRST_ADDRESS_LIMIT = 12
 EXTRA_ADDRESS_LIMIT = 16
-ADDRESS_LIMITS = (12, 16, 25, 25)
+ADDRESS_LIMITS = (13, 16, 25, 25)
 
 BUILDING_KEYWORDS = [
     "マンション", "アパート", "ハイツ", "コーポ", "メゾン", "レジデンス",
@@ -232,6 +232,16 @@ def allocate_tokens(tokens, limits=ADDRESS_LIMITS):
                 pending = parts + pending
                 column += 1
                 continue
+
+            if column == 0:
+                remaining_width = limits[column] - display_width(values[column])
+                prefix, suffix = split_by_display_width(current, remaining_width)
+                if prefix:
+                    values[column] = _join_address_tokens(values[column], prefix)
+                    if suffix:
+                        pending.insert(0, suffix)
+                    column += 1
+                    continue
 
             column += 1
             pending.insert(0, current)
