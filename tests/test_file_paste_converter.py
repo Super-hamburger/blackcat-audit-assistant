@@ -35,7 +35,7 @@ class UploadConverterTest(unittest.TestCase):
     def convert_and_load_one_piece(self, rows):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "one-piece.xlsx"
-            headers = ONE_PIECE_HEADERS + ["数量", "货架"]
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
             self.create_workbook(source_path, headers, rows)
             result, sheet = self.convert_and_load(source_path, temp_dir)
             values = [[cell.value for cell in row] for row in sheet.iter_rows()]
@@ -48,18 +48,22 @@ class UploadConverterTest(unittest.TestCase):
     def convert_and_load_blackcat(self, row):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "blackcat.xlsx"
-            self.create_workbook(source_path, NEW_BLACKCAT_HEADERS, [row])
+            headers = NEW_BLACKCAT_HEADERS + ["备注"]
+            self.create_workbook(source_path, headers, [row])
             result, sheet = self.convert_and_load(source_path, temp_dir)
             values = [[cell.value for cell in line] for line in sheet.iter_rows()]
-        return result, values
+            fills = {"B2": color_suffix(sheet["B2"].fill)}
+        return result, values, fills
 
-    def one_piece_row(self, reference, sku, quantity, shelf, address="芝公園1-2-3"):
+    def one_piece_row(
+        self, reference, sku, quantity, shelf, address="芝公園1-2-3", shipping_method="宅急便"
+    ):
         return {
             "参考单号": reference,
             "SKU": sku,
             "数量": quantity,
             "货架": shelf,
-            "运输方式": "宅急便",
+            "运输方式": shipping_method,
             "收件人": "山田太郎",
             "收件电话": "0312345678",
             "州": "東京都",
@@ -110,7 +114,7 @@ class UploadConverterTest(unittest.TestCase):
         self.assertIsNone(values[1][29])
 
     def test_blackcat_uses_template_header_sku_and_detail_columns(self):
-        result, values = self.convert_and_load_blackcat({
+        result, values, _ = self.convert_and_load_blackcat({
             "单号": "NB-1",
             "收件人电话": "09012345678",
             "收件邮编": "1050011",
@@ -131,6 +135,45 @@ class UploadConverterTest(unittest.TestCase):
         self.assertEqual(values[1][27], "sku-a")
         self.assertEqual(values[1][29], "*3")
         self.assertEqual(result["source_type"], "黑猫新版表格")
+
+    def test_one_piece_writes_zero_for_takkyubin(self):
+        _, values, _ = self.convert_and_load_one_piece([
+            self.one_piece_row("TAK", "sku-a", 1, "1-1", shipping_method="宅急便"),
+        ])
+
+        self.assertEqual(values[1][1], "0")
+
+    def test_blackcat_writes_a_for_toukan_remark(self):
+        _, values, fills = self.convert_and_load_blackcat({
+            "单号": "TOUKAN",
+            "收件人电话": "09012345678",
+            "收件邮编": "1050011",
+            "收件地址": "東京都港区芝公園1-2-3",
+            "详细地址": "101号室",
+            "收件姓名": "山田太郎",
+            "sku": "sku-a",
+            "明细": "*1",
+            "备注": "7.15黑猫投函 售后补发订单",
+        })
+
+        self.assertEqual(values[1][1], "A")
+        self.assertNotEqual(fills["B2"], "F4CCCC")
+
+    def test_blackcat_marks_blank_shipment_type(self):
+        _, values, fills = self.convert_and_load_blackcat({
+            "单号": "UNKNOWN",
+            "收件人电话": "09012345678",
+            "收件邮编": "1050011",
+            "收件地址": "東京都港区芝公園1-2-3",
+            "详细地址": "101号室",
+            "收件姓名": "山田太郎",
+            "sku": "sku-a",
+            "明细": "*1",
+            "备注": "",
+        })
+
+        self.assertIsNone(values[1][1])
+        self.assertEqual(fills["B2"], "F4CCCC")
 
     def test_converter_marks_ambiguous_quantity_without_dropping_order(self):
         result, values, fills = self.convert_and_load_one_piece([

@@ -25,8 +25,9 @@ MARK_ADDRESS_SPLIT = PatternFill("solid", fgColor="FFF2CC")
 MARK_ADDRESS_OVERFLOW = PatternFill("solid", fgColor="F4CCCC")
 MARK_QUANTITY_ISSUE = PatternFill("solid", fgColor="F4CCCC")
 MARK_MISSING_REQUIRED = PatternFill("solid", fgColor="F4CCCC")
+MARK_SHIPMENT_TYPE_ISSUE = PatternFill("solid", fgColor="F4CCCC")
 
-TEXT_COLUMNS = ("A", "I", "K", "L", "M", "N", "O", "P", "AB", "AC", "AD")
+TEXT_COLUMNS = ("A", "B", "I", "K", "L", "M", "N", "O", "P", "AB", "AC", "AD")
 
 
 def norm(value):
@@ -97,6 +98,15 @@ def split_item_text_for_ad(item_text, limit=50):
         return ",".join(ad_items), ",".join(items[index:])
 
     return ",".join(ad_items), ""
+
+
+def resolve_shipment_type(value):
+    text = norm(value)
+    has_toukan = "投函" in text
+    has_takkyubin = "宅急便" in text
+    if has_toukan == has_takkyubin:
+        return "", "发货方式无法唯一识别"
+    return ("A", None) if has_toukan else ("0", None)
 
 
 def shelf_sort_key(value, source_index):
@@ -208,11 +218,18 @@ class UploadConverter:
                 ac_value = ""
                 ad_value = record["detail"]
 
+            shipment_type, shipment_type_issue = resolve_shipment_type(
+                record["shipping_method"]
+                if source_type == "一件代发表格"
+                else record["remark"]
+            )
+
             if quantity_issue:
                 quantity_issue_orders.append(record["reference"])
 
             values = {
                 "A": record["reference"],
+                "B": shipment_type,
                 "E": datetime.now().strftime("%Y%m%d"),
                 "I": record["phone"],
                 "K": record["postal"],
@@ -236,6 +253,8 @@ class UploadConverter:
                 output_sheet[f"O{output_row}"].fill = MARK_ADDRESS_OVERFLOW
             if quantity_issue:
                 output_sheet[f"AD{output_row}"].fill = MARK_QUANTITY_ISSUE
+            if shipment_type_issue:
+                output_sheet[f"B{output_row}"].fill = MARK_SHIPMENT_TYPE_ISSUE
 
             missing_columns = [
                 column
@@ -284,6 +303,7 @@ class UploadConverter:
             "shelf": read(row, header_map, "货架"),
             "sku": read(row, header_map, "SKU"),
             "quantity": read(row, header_map, "数量"),
+            "shipping_method": read(row, header_map, "运输方式"),
         }
 
     def read_new_blackcat_row(self, row, header_map):
@@ -296,4 +316,5 @@ class UploadConverter:
             "detail_address": read(row, header_map, "详细地址"),
             "sku": read(row, header_map, "sku"),
             "detail": read(row, header_map, "明细"),
+            "remark": read(row, header_map, "备注"),
         }
