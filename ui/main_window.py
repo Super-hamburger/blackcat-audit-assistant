@@ -32,7 +32,7 @@ from modules.scan_check.module import ScanCheckService
 
 
 APP_TITLE = "黑猫审单助手"
-APP_VERSION = "4.4.1"
+APP_VERSION = "4.4.2"
 APP_BRAND = "MADE IN チュウ ビョ"
 EXCEL_PROGRESS_MINIMUM_MS = 2000
 
