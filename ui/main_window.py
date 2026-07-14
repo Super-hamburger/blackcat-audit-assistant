@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 from core.path_manager import PathManager
 
-from PySide6.QtCore import Qt, QThread, QTimer
+from PySide6.QtCore import Qt, QObject, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -34,6 +34,31 @@ from modules.scan_check.module import ScanCheckService
 APP_TITLE = "黑猫审单助手"
 APP_VERSION = "4.4.1"
 APP_BRAND = "MADE IN チュウ ビョ"
+EXCEL_PROGRESS_MINIMUM_MS = 2000
+
+
+def minimum_remaining_progress_ms(started_at, now, minimum_ms=EXCEL_PROGRESS_MINIMUM_MS):
+    elapsed_ms = int((now - started_at) * 1000)
+    return max(0, minimum_ms - elapsed_ms)
+
+
+class ExcelConversionWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, module_registry, context):
+        super().__init__()
+        self.module_registry = module_registry
+        self.context = context
+
+    def run(self):
+        try:
+            module_result = self.module_registry.run("file_paste", self.context)
+            if not module_result.ok or not module_result.data:
+                raise RuntimeError(module_result.message)
+            self.finished.emit(module_result.data)
+        except Exception as error:
+            self.failed.emit(str(error))
 
 
 class ScrollPage(QScrollArea):
@@ -77,6 +102,17 @@ class MainWindow(QMainWindow):
         self.latest_update_info = None
         self.update_check_thread = None
         self.update_check_worker = None
+        self.excel_conversion_thread = None
+        self.excel_conversion_worker = None
+        self.excel_progress_dialog = None
+        self.excel_progress_bar = None
+        self.excel_progress_status = None
+        self.excel_progress_started_at = None
+        self.excel_pending_result = None
+        self.excel_pending_error = None
+        self.excel_progress_timer = QTimer(self)
+        self.excel_progress_timer.setInterval(40)
+        self.excel_progress_timer.timeout.connect(self.advance_excel_progress)
         self.auto_update_timer = QTimer(self)
         self.auto_update_timer.setInterval(6 * 60 * 60 * 1000)
         self.auto_update_timer.timeout.connect(self.start_background_update_check)
@@ -446,10 +482,10 @@ class MainWindow(QMainWindow):
         result_row.addWidget(self.excel_output_input, 1)
         input_card.layout().addLayout(result_row)
 
-        generate_btn = QPushButton("⬇  生成上传表")
-        generate_btn.setObjectName("ExcelButton")
-        generate_btn.clicked.connect(self.convert_upload_excel)
-        input_card.layout().addWidget(generate_btn)
+        self.excel_generate_button = QPushButton("⬇  生成上传表")
+        self.excel_generate_button.setObjectName("ExcelButton")
+        self.excel_generate_button.clicked.connect(self.convert_upload_excel)
+        input_card.layout().addWidget(self.excel_generate_button)
         workspace.addWidget(input_card, 3)
 
         log_card = self.create_card("2. 文件粘贴日志")
@@ -1935,48 +1971,154 @@ class MainWindow(QMainWindow):
         else:
             output_dir = PathManager.output_dir() / "BlackCatUploadTable"
 
-        try:
-            module_result = self.module_registry.run("file_paste", {
-                "source_path": source,
-                "output_dir": output_dir,
-                "open_after": True,
-            })
-            if not module_result.ok or not module_result.data:
-                raise RuntimeError(module_result.message)
-            result = module_result.data
-            self.excel_output_input.setText(result["output_path"])
-            self.add_excel_log("SUCCESS", f"黑猫上传表已生成: {result['output_path']}")
-            self.add_excel_log("INFO", f"识别格式: {result.get('source_type', '')}")
-            self.add_excel_log("INFO", f"生成行数: {result['row_count']}")
-            self.add_excel_log("INFO", f"地址自动拆分并标黄: {result.get('split_count', 0)} 行")
-            self.add_excel_log("INFO", f"关键字段为空并标红: {result.get('missing_count', 0)} 行")
-            self.add_excel_log("INFO", f"地址超长已放入O列并标红: {result.get('address_overflow_count', 0)} 行")
-            self.add_excel_log("INFO", f"SKU数量待确认并标红: {result.get('quantity_issue_count', 0)} 行")
-            quantity_issue_orders = result.get("quantity_issue_orders", [])
-            if quantity_issue_orders:
-                self.add_excel_log("WARNING", "SKU数量待确认订单: " + ", ".join(quantity_issue_orders))
-            self.data_manager.add_record({
-                "type": "文件粘贴",
-                "source": str(source),
-                "output": str(result["output_path"]),
-                "total": result["row_count"],
-                "success": result["row_count"],
-                "failed": 0,
-                "elapsed": 0,
-                "note": result.get("source_type", "")
-            })
-            self.refresh_dashboard()
-            self.refresh_statistics()
-            self.play_done_sound()
-            show_info(
-                self,
-                "完成",
-                f"黑猫上传表生成完成。\n识别格式：{result.get('source_type', '')}\n生成行数：{result['row_count']}\n黄色标记地址拆分：{result.get('split_count', 0)} 行\n红色标记字段为空：{result.get('missing_count', 0)} 行\n地址超长已放入O列：{result.get('address_overflow_count', 0)} 行\nSKU数量待确认：{result.get('quantity_issue_count', 0)} 行\n文件：{result['output_path']}\n\n已自动打开生成文件。"
-            )
-        except Exception as error:
+        self.start_excel_conversion(source, output_dir)
+
+    def start_excel_conversion(self, source, output_dir):
+        if self.excel_conversion_thread and self.excel_conversion_thread.isRunning():
+            return
+
+        self.excel_generate_button.setEnabled(False)
+        self.excel_pending_result = None
+        self.excel_pending_error = None
+        self.excel_progress_started_at = time.monotonic()
+        self.show_excel_progress_dialog()
+        self.excel_progress_timer.start()
+
+        context = {
+            "source_path": source,
+            "output_dir": output_dir,
+            "open_after": True,
+        }
+        self.excel_conversion_thread = QThread(self)
+        self.excel_conversion_worker = ExcelConversionWorker(self.module_registry, context)
+        self.excel_conversion_worker.moveToThread(self.excel_conversion_thread)
+        self.excel_conversion_thread.started.connect(self.excel_conversion_worker.run)
+        self.excel_conversion_worker.finished.connect(self.on_excel_conversion_finished)
+        self.excel_conversion_worker.failed.connect(self.on_excel_conversion_failed)
+        self.excel_conversion_worker.finished.connect(self.excel_conversion_thread.quit)
+        self.excel_conversion_worker.failed.connect(self.excel_conversion_thread.quit)
+        self.excel_conversion_thread.finished.connect(self.excel_conversion_worker.deleteLater)
+        self.excel_conversion_thread.finished.connect(self.clear_excel_conversion_worker)
+        self.excel_conversion_thread.finished.connect(self.excel_conversion_thread.deleteLater)
+        self.excel_conversion_thread.start()
+
+    def show_excel_progress_dialog(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("正在生成上传表")
+        dialog.setWindowModality(Qt.ApplicationModal)
+        dialog.setWindowFlag(Qt.WindowCloseButtonHint, False)
+        dialog.setFixedSize(430, 180)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(28, 26, 28, 24)
+        layout.setSpacing(14)
+
+        title = QLabel("正在生成黑猫上传表")
+        title.setObjectName("DialogTitle")
+        layout.addWidget(title)
+
+        self.excel_progress_status = QLabel("正在处理 Excel 文件，请稍候...")
+        self.excel_progress_status.setObjectName("DialogText")
+        self.excel_progress_status.setWordWrap(True)
+        layout.addWidget(self.excel_progress_status)
+
+        self.excel_progress_bar = QProgressBar()
+        self.excel_progress_bar.setRange(0, 100)
+        self.excel_progress_bar.setValue(0)
+        self.excel_progress_bar.setTextVisible(True)
+        layout.addWidget(self.excel_progress_bar)
+
+        self.excel_progress_dialog = dialog
+        dialog.show()
+
+    def advance_excel_progress(self):
+        if not self.excel_progress_bar or self.excel_progress_started_at is None:
+            return
+
+        elapsed_ms = int((time.monotonic() - self.excel_progress_started_at) * 1000)
+        target_value = min(95, max(1, int(5 + elapsed_ms * 90 / EXCEL_PROGRESS_MINIMUM_MS)))
+        if target_value > self.excel_progress_bar.value():
+            self.excel_progress_bar.setValue(target_value)
+
+    def on_excel_conversion_finished(self, result):
+        self.excel_pending_result = result
+        self.complete_excel_progress_after_minimum_duration()
+
+    def on_excel_conversion_failed(self, error):
+        self.excel_pending_error = error
+        self.complete_excel_progress_after_minimum_duration()
+
+    def complete_excel_progress_after_minimum_duration(self):
+        remaining_ms = minimum_remaining_progress_ms(
+            self.excel_progress_started_at,
+            time.monotonic(),
+        )
+        QTimer.singleShot(remaining_ms, self.finish_excel_progress)
+
+    def finish_excel_progress(self):
+        self.excel_progress_timer.stop()
+        if self.excel_progress_bar:
+            self.excel_progress_bar.setValue(100)
+        if self.excel_progress_status:
+            status = "生成失败，正在显示错误..." if self.excel_pending_error else "生成完成，正在打开结果..."
+            self.excel_progress_status.setText(status)
+        QTimer.singleShot(180, self.close_excel_progress_and_report)
+
+    def close_excel_progress_and_report(self):
+        if self.excel_progress_dialog:
+            self.excel_progress_dialog.close()
+            self.excel_progress_dialog.deleteLater()
+        self.excel_progress_dialog = None
+        self.excel_progress_bar = None
+        self.excel_progress_status = None
+        self.excel_generate_button.setEnabled(True)
+
+        if self.excel_pending_error:
+            error = self.excel_pending_error
+            self.excel_pending_error = None
             self.add_excel_log("ERROR", f"黑猫上传表生成失败: {error}")
             self.play_error_sound()
-            show_warning(self, "提示", str(error))
+            show_warning(self, "提示", error)
+            return
+
+        result = self.excel_pending_result
+        self.excel_pending_result = None
+        self.handle_excel_conversion_success(result)
+
+    def handle_excel_conversion_success(self, result):
+        self.excel_output_input.setText(result["output_path"])
+        self.add_excel_log("SUCCESS", f"黑猫上传表已生成: {result['output_path']}")
+        self.add_excel_log("INFO", f"识别格式: {result.get('source_type', '')}")
+        self.add_excel_log("INFO", f"生成行数: {result['row_count']}")
+        self.add_excel_log("INFO", f"地址自动拆分并标黄: {result.get('split_count', 0)} 行")
+        self.add_excel_log("INFO", f"关键字段为空并标红: {result.get('missing_count', 0)} 行")
+        self.add_excel_log("INFO", f"地址超长已放入O列并标红: {result.get('address_overflow_count', 0)} 行")
+        self.add_excel_log("INFO", f"SKU数量待确认并标红: {result.get('quantity_issue_count', 0)} 行")
+        quantity_issue_orders = result.get("quantity_issue_orders", [])
+        if quantity_issue_orders:
+            self.add_excel_log("WARNING", "SKU数量待确认订单: " + ", ".join(quantity_issue_orders))
+        self.data_manager.add_record({
+            "type": "文件粘贴",
+            "source": str(self.excel_input.text().strip()),
+            "output": str(result["output_path"]),
+            "total": result["row_count"],
+            "success": result["row_count"],
+            "failed": 0,
+            "elapsed": 0,
+            "note": result.get("source_type", "")
+        })
+        self.refresh_dashboard()
+        self.refresh_statistics()
+        self.play_done_sound()
+        show_info(
+            self,
+            "完成",
+            f"黑猫上传表生成完成。\n识别格式：{result.get('source_type', '')}\n生成行数：{result['row_count']}\n黄色标记地址拆分：{result.get('split_count', 0)} 行\n红色标记字段为空：{result.get('missing_count', 0)} 行\n地址超长已放入O列：{result.get('address_overflow_count', 0)} 行\nSKU数量待确认：{result.get('quantity_issue_count', 0)} 行\n文件：{result['output_path']}\n\n已自动打开生成文件。"
+        )
+
+    def clear_excel_conversion_worker(self):
+        self.excel_conversion_worker = None
+        self.excel_conversion_thread = None
 
     def save_settings(self):
         if hasattr(self, "batch_size"):
