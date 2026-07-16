@@ -109,6 +109,21 @@ def resolve_shipment_type(value):
     return ("A", None) if has_toukan else ("0", None)
 
 
+def sku_quantity_group_key(sku_text, quantity_value):
+    skus = split_skus(sku_text)
+    if len(skus) > 1:
+        return 2
+    if not skus:
+        return 3
+
+    item_text, quantity_issue = resolve_sku_quantities(sku_text, quantity_value)
+    if quantity_issue:
+        return 3
+
+    amount = int(item_text.rsplit("*", 1)[1])
+    return 0 if amount == 1 else 1
+
+
 def shelf_sort_key(value, source_index):
     shelf = norm(value)
     if not shelf or len(split_skus(shelf)) != 1:
@@ -179,7 +194,12 @@ class UploadConverter:
                 records.append(record)
 
         if source_type == "一件代发表格":
-            records.sort(key=lambda record: shelf_sort_key(record["shelf"], record["source_index"]))
+            records.sort(
+                key=lambda record: (
+                    sku_quantity_group_key(record["sku"], record["quantity"]),
+                    shelf_sort_key(record["shelf"], record["source_index"]),
+                )
+            )
 
         output_book, output_sheet = load_upload_template()
         if output_sheet.max_row > 2:
