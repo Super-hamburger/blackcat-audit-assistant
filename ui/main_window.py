@@ -3,7 +3,7 @@ import time
 from pathlib import Path
 from core.path_manager import PathManager
 
-from PySide6.QtCore import Qt, QObject, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QObject, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -35,6 +35,9 @@ APP_TITLE = "黑猫审单助手"
 APP_VERSION = "4.4.2"
 APP_BRAND = "MADE IN チュウ ビョ"
 EXCEL_PROGRESS_MINIMUM_MS = 2000
+SCAN_AUTO_SUBMIT_DELAY_MS = 150
+SCAN_AUTO_SUBMIT_MIN_LENGTH = 4
+SCAN_AUTO_SUBMIT_MAX_DURATION_MS = 1000
 
 
 def minimum_remaining_progress_ms(started_at, now, minimum_ms=EXCEL_PROGRESS_MINIMUM_MS):
@@ -76,6 +79,58 @@ class ScrollPage(QScrollArea):
 
     def layout(self):
         return self.content_layout
+
+
+class ScanInputController(QObject):
+    def __init__(self, input_widget, submit_callback):
+        super().__init__(input_widget)
+        self.input_widget = input_widget
+        self.submit_callback = submit_callback
+        self.first_input_at = None
+        self.auto_submit_timer = QTimer(self)
+        self.auto_submit_timer.setSingleShot(True)
+        self.auto_submit_timer.setInterval(SCAN_AUTO_SUBMIT_DELAY_MS)
+        self.auto_submit_timer.timeout.connect(self.submit_if_fast_input)
+        self.input_widget.textEdited.connect(self.on_text_edited)
+        self.input_widget.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if (
+            watched is self.input_widget
+            and event.type() == QEvent.KeyPress
+            and event.key() in (Qt.Key_Tab, Qt.Key_Return, Qt.Key_Enter)
+        ):
+            self.submit()
+            return True
+        return super().eventFilter(watched, event)
+
+    def on_text_edited(self, text):
+        if not text:
+            self.cancel()
+            return
+
+        if self.first_input_at is None:
+            self.first_input_at = time.monotonic()
+        if len(text) >= SCAN_AUTO_SUBMIT_MIN_LENGTH:
+            self.auto_submit_timer.start()
+
+    def submit_if_fast_input(self):
+        elapsed_ms = int((time.monotonic() - self.first_input_at) * 1000) if self.first_input_at else 0
+        if (
+            len(self.input_widget.text()) >= SCAN_AUTO_SUBMIT_MIN_LENGTH
+            and elapsed_ms <= SCAN_AUTO_SUBMIT_MAX_DURATION_MS
+        ):
+            self.submit()
+
+    def submit(self):
+        self.auto_submit_timer.stop()
+        self.first_input_at = None
+        self.submit_callback()
+        self.input_widget.setFocus()
+
+    def cancel(self):
+        self.auto_submit_timer.stop()
+        self.first_input_at = None
 
 
 class MainWindow(QMainWindow):
@@ -698,7 +753,7 @@ class MainWindow(QMainWindow):
         self.scan_input = QLineEdit()
         self.scan_input.setObjectName("ScanBigInput")
         self.scan_input.setPlaceholderText("▥   请扫描出库单号或 SKU")
-        self.scan_input.returnPressed.connect(self.handle_scan_input)
+        self.scan_input_controller = ScanInputController(self.scan_input, self.handle_scan_input)
         scan_card.layout().addWidget(self.scan_input)
         hint = QLabel("将光标放在输入框内，使用扫码枪扫描。本机导入批次仅作核对依据，多电脑同时操作时以扫码结果和异常记录为准。")
         hint.setObjectName("ScanMutedText")
