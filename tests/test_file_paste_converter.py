@@ -74,16 +74,20 @@ class UploadConverterTest(unittest.TestCase):
             "收件邮编": "1050011",
         }
 
-    def test_one_piece_merges_each_sku_with_quantity_and_sorts_shelves(self):
+    def test_one_piece_sorts_sku_quantity_groups_before_shelf_order(self):
         result, values, _ = self.convert_and_load_one_piece([
-            self.one_piece_row("MULTI", "sku-a,sku-b", "*1+*1", "13-6-3-2"),
-            self.one_piece_row("EARLY", "sku-c", 1, "13-3-3-2"),
-            self.one_piece_row("BOTTOM", "sku-d", 1, "16-1-1-3,13-6-3-3"),
+            self.one_piece_row("MULTI-LATE", "sku-a,sku-b", "*1+*1", "9-1"),
+            self.one_piece_row("ONE-LATE", "sku-c", 1, "8-1"),
+            self.one_piece_row("MANY-LATE", "sku-d", 3, "7-1"),
+            self.one_piece_row("MULTI-EARLY", "sku-e,sku-f", "*1+*1", "1-1"),
+            self.one_piece_row("ONE-EARLY", "sku-g", 1, "2-1"),
+            self.one_piece_row("MANY-EARLY", "sku-h", 3, "3-1"),
         ])
 
-        self.assertEqual([row[0] for row in values[1:4]], ["EARLY", "MULTI", "BOTTOM"])
-        self.assertEqual(values[1][27], "13-3-3-2")
-        self.assertEqual(values[2][29], "sku-a*1,sku-b*1")
+        self.assertEqual(
+            [row[0] for row in values[1:7]],
+            ["ONE-EARLY", "ONE-LATE", "MANY-EARLY", "MANY-LATE", "MULTI-EARLY", "MULTI-LATE"],
+        )
         self.assertEqual(result["quantity_issue_count"], 0)
 
     def test_one_piece_moves_complete_sku_overflow_items_from_ad_to_ac(self):
