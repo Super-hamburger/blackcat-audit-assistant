@@ -194,6 +194,27 @@ class FilePasteProgressTest(unittest.TestCase):
         self.assertIsNone(window.excel_conversion_thread)
         self.assertEqual(completed, [True])
 
+    def test_success_message_describes_output_folder_and_file_count(self):
+        message = main_window.file_paste_success_message({
+            "output_dir": "C:/temp/黑猫上传表_20260716_120000",
+            "output_paths": [
+                "C:/temp/01_单SKU_第1份_999条.xlsx",
+                "C:/temp/02_多SKU_第1份_201条.xlsx",
+            ],
+            "file_count": 2,
+            "row_count": 1200,
+            "source_type": "一件代发表格",
+            "split_count": 0,
+            "missing_count": 0,
+            "address_overflow_count": 0,
+            "quantity_issue_count": 0,
+        })
+
+        self.assertIn("生成文件：2 份", message)
+        self.assertIn("输出文件夹：C:/temp/黑猫上传表_20260716_120000", message)
+        self.assertIn("01_单SKU_第1份_999条.xlsx", message)
+        self.assertIn("已自动打开输出文件夹", message)
+
 
 if __name__ == "__main__":
     unittest.main()

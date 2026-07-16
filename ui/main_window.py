@@ -53,6 +53,24 @@ def activate_english_keyboard_layout():
         return False
 
 
+def file_paste_success_message(result):
+    output_paths = result.get("output_paths", [])
+    names = "\n".join(f"- {Path(path).name}" for path in output_paths)
+    return (
+        "黑猫上传表生成完成。"
+        f"\n识别格式：{result.get('source_type', '')}"
+        f"\n生成行数：{result['row_count']}"
+        f"\n生成文件：{result.get('file_count', len(output_paths))} 份"
+        f"\n输出文件夹：{result.get('output_dir', result.get('output_path', ''))}"
+        f"\n黄色标记地址拆分：{result.get('split_count', 0)} 行"
+        f"\n红色标记字段为空：{result.get('missing_count', 0)} 行"
+        f"\n地址超长已放入O列：{result.get('address_overflow_count', 0)} 行"
+        f"\nSKU数量待确认：{result.get('quantity_issue_count', 0)} 行"
+        f"\n\n生成文件：\n{names}"
+        "\n\n已自动打开输出文件夹。"
+    )
+
+
 class ExcelConversionWorker(QObject):
     progress = Signal(object)
     finished = Signal(object)
@@ -2241,10 +2259,15 @@ class MainWindow(QMainWindow):
         self.handle_excel_conversion_success(result)
 
     def handle_excel_conversion_success(self, result):
-        self.excel_output_input.setText(result["output_path"])
-        self.add_excel_log("SUCCESS", f"黑猫上传表已生成: {result['output_path']}")
+        output_dir = result.get("output_dir", result["output_path"])
+        output_paths = result.get("output_paths", [result["output_path"]])
+        self.excel_output_input.setText(output_dir)
+        self.add_excel_log("SUCCESS", f"黑猫上传表已生成至文件夹: {output_dir}")
         self.add_excel_log("INFO", f"识别格式: {result.get('source_type', '')}")
         self.add_excel_log("INFO", f"生成行数: {result['row_count']}")
+        self.add_excel_log("INFO", f"生成文件: {result.get('file_count', len(output_paths))} 份")
+        for output_path in output_paths:
+            self.add_excel_log("INFO", f"文件: {Path(output_path).name}")
         self.add_excel_log("INFO", f"地址自动拆分并标黄: {result.get('split_count', 0)} 行")
         self.add_excel_log("INFO", f"关键字段为空并标红: {result.get('missing_count', 0)} 行")
         self.add_excel_log("INFO", f"地址超长已放入O列并标红: {result.get('address_overflow_count', 0)} 行")
@@ -2255,7 +2278,7 @@ class MainWindow(QMainWindow):
         self.data_manager.add_record({
             "type": "文件粘贴",
             "source": str(self.excel_input.text().strip()),
-            "output": str(result["output_path"]),
+            "output": str(output_dir),
             "total": result["row_count"],
             "success": result["row_count"],
             "failed": 0,
@@ -2268,7 +2291,7 @@ class MainWindow(QMainWindow):
         show_info(
             self,
             "完成",
-            f"黑猫上传表生成完成。\n识别格式：{result.get('source_type', '')}\n生成行数：{result['row_count']}\n黄色标记地址拆分：{result.get('split_count', 0)} 行\n红色标记字段为空：{result.get('missing_count', 0)} 行\n地址超长已放入O列：{result.get('address_overflow_count', 0)} 行\nSKU数量待确认：{result.get('quantity_issue_count', 0)} 行\n文件：{result['output_path']}\n\n已自动打开生成文件。"
+            file_paste_success_message(result),
         )
 
     def clear_excel_conversion_worker(self):
