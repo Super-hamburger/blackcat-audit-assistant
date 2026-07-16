@@ -14,6 +14,7 @@ from modules.file_paste.converter import (
     NEW_BLACKCAT_HEADERS,
     ONE_PIECE_HEADERS,
     UploadConverter,
+    clone_template_row,
 )
 from modules.file_paste.template import load_upload_template
 
@@ -303,6 +304,46 @@ class UploadConverterTest(unittest.TestCase):
                 )
 
             self.assertEqual(list(output_dir.glob("*.xlsx")), [])
+
+    def test_converter_handles_six_thousand_rows_with_monotonic_write_progress(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "large-one-piece.xlsx"
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            rows = [
+                self.one_piece_row(f"LARGE-{index}", f"sku-{index}", 1, f"{index}-1")
+                for index in range(1, 6001)
+            ]
+            self.create_workbook(source_path, headers, rows)
+            events = []
+
+            result = UploadConverter().convert(
+                source_path,
+                Path(temp_dir) / "output",
+                open_after=False,
+                progress_callback=events.append,
+            )
+
+            writing_values = [
+                event["current"]
+                for event in events
+                if event["phase"] == "writing"
+            ]
+            self.assertEqual(result["row_count"], 6000)
+            self.assertEqual(writing_values[-1], 6000)
+            self.assertEqual(writing_values, sorted(writing_values))
+            self.assertLess(len(writing_values), 130)
+            self.assertTrue(Path(result["output_path"]).exists())
+
+    def test_clone_template_row_skips_blank_default_cells(self):
+        workbook, sheet = load_upload_template()
+        try:
+            clone_template_row(sheet, 2, 3)
+
+            self.assertNotIn((3, 1), sheet._cells)
+            self.assertEqual(sheet["R3"].value, "様")
+            self.assertEqual(sheet["AP3"].value, "01")
+        finally:
+            workbook.close()
 
 
 if __name__ == "__main__":

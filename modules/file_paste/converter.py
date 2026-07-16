@@ -1,4 +1,3 @@
-from copy import copy
 from datetime import datetime
 import os
 from pathlib import Path
@@ -205,8 +204,10 @@ def combine_one_piece_address(record):
 
 
 def clone_template_row(sheet, source_row, target_row):
-    for column in range(1, sheet.max_column + 1):
-        source = sheet.cell(source_row, column)
+    for source in sheet[source_row]:
+        if source.value is None and not source.has_style:
+            continue
+        column = source.column
         target = sheet.cell(target_row, column)
         target.value = source.value
         if source.has_style:
