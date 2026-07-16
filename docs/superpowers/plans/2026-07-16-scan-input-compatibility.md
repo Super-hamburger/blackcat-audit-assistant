@@ -62,4 +62,3 @@
 - [ ] 运行 D:\Python\python.exe -c "import json; json.load(open('data/changelog.json', encoding='utf-8'))"。
 - [ ] 运行 D:\Python\python.exe app.py --self-test。
 - [ ] 提交更新记录：docs: record scanner input compatibility。
-
