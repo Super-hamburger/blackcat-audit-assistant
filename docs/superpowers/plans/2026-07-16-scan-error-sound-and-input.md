@@ -40,4 +40,3 @@
 - [ ] 运行全部自动化测试、ui/main_window.py 静态编译、JSON 校验和源码自测。
 - [ ] 打包独立测试包并运行打包 EXE 自测。
 - [ ] 提交更新记录：docs: record scanner feedback improvements。
-
