@@ -82,13 +82,22 @@ class UploadConverterTest(unittest.TestCase):
             self.one_piece_row("MULTI-EARLY", "sku-e,sku-f", "*1+*1", "1-1"),
             self.one_piece_row("ONE-EARLY", "sku-g", 1, "2-1"),
             self.one_piece_row("MANY-EARLY", "sku-h", 3, "3-1"),
+            self.one_piece_row("MULTI-INVALID", "sku-i,sku-j", 5, "0-1"),
         ])
 
         self.assertEqual(
-            [row[0] for row in values[1:7]],
-            ["ONE-EARLY", "ONE-LATE", "MANY-EARLY", "MANY-LATE", "MULTI-EARLY", "MULTI-LATE"],
+            [row[0] for row in values[1:8]],
+            [
+                "ONE-EARLY",
+                "ONE-LATE",
+                "MANY-EARLY",
+                "MANY-LATE",
+                "MULTI-EARLY",
+                "MULTI-LATE",
+                "MULTI-INVALID",
+            ],
         )
-        self.assertEqual(result["quantity_issue_count"], 0)
+        self.assertEqual(result["quantity_issue_count"], 1)
 
     def test_one_piece_moves_complete_sku_overflow_items_from_ad_to_ac(self):
         sku_one = "a" * 20

@@ -111,14 +111,15 @@ def resolve_shipment_type(value):
 
 def sku_quantity_group_key(sku_text, quantity_value):
     skus = split_skus(sku_text)
-    if len(skus) > 1:
-        return 2
     if not skus:
         return 3
 
     item_text, quantity_issue = resolve_sku_quantities(sku_text, quantity_value)
     if quantity_issue:
         return 3
+
+    if len(skus) > 1:
+        return 2
 
     amount = int(item_text.rsplit("*", 1)[1])
     return 0 if amount == 1 else 1
