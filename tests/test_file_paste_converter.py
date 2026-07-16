@@ -438,6 +438,44 @@ class UploadConverterTest(unittest.TestCase):
             self.assertEqual(self.output_references(result["output_paths"][1]), ["MANY-2"])
             self.assertEqual(self.output_references(result["output_paths"][2]), ["MULTI-1", "MULTI-2"])
 
+    def test_converter_rejects_a_source_with_no_valid_orders(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "empty-one-piece.xlsx"
+            output_dir = Path(temp_dir) / "output"
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            self.create_workbook(source_path, headers, [])
+
+            with self.assertRaisesRegex(ValueError, "没有可生成的有效订单"):
+                UploadConverter().convert(source_path, output_dir, open_after=False)
+
+            self.assertEqual(list(output_dir.iterdir()), [])
+
+    def test_converter_discards_all_split_files_when_later_save_fails(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "one-piece.xlsx"
+            output_dir = Path(temp_dir) / "output"
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            self.create_workbook(source_path, headers, [
+                self.one_piece_row("SAVE-FAIL-1", "sku-a", 1, "1-1"),
+                self.one_piece_row("SAVE-FAIL-2", "sku-b", 1, "2-1"),
+            ])
+            original_save = Workbook.save
+            save_count = 0
+
+            def fail_second_save(workbook, path):
+                nonlocal save_count
+                save_count += 1
+                if save_count == 2:
+                    raise OSError("模拟保存失败")
+                return original_save(workbook, path)
+
+            with patch("modules.file_paste.converter.MAX_OUTPUT_ROWS", 1):
+                with patch.object(Workbook, "save", fail_second_save):
+                    with self.assertRaisesRegex(OSError, "模拟保存失败"):
+                        UploadConverter().convert(source_path, output_dir, open_after=False)
+
+            self.assertEqual(list(output_dir.iterdir()), [])
+
 
 if __name__ == "__main__":
     unittest.main()

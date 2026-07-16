@@ -290,6 +290,8 @@ class UploadConverter:
                     )
 
             control.checkpoint()
+            if not records:
+                raise ValueError("源表中没有可生成的有效订单。")
             if source_type == "一件代发表格":
                 report_progress(progress_callback, "sorting", "正在按货架排序...", indeterminate=True)
                 records.sort(
