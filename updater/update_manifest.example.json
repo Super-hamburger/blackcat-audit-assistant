@@ -1,13 +1,14 @@
 {
-  "latest_version": "4.4.2",
-  "message": "正式版 4.4.2：文件粘贴新增发货方式识别，并加入后台生成进度动画。",
+  "latest_version": "4.4.3",
+  "message": "正式版 4.4.3：文件粘贴支持真实进度、暂停/结束和按 SKU 类型分文件输出。",
   "manifest_url": "https://super-hamburger.github.io/blackcat-audit-assistant/update_manifest.json",
-  "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.4.2/BlackCatAuditAssistant_Setup_4.4.2.zip",
-  "package_sha256": "c11a3d33ff4fbdca7de9efa033c2f63700c7e053b7ef434adf3646d5ffc8e5f9",
+  "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.4.3/BlackCatAuditAssistant_Setup_4.4.3.zip",
+  "package_sha256": "a60926f31f625e44f021221623767ec2d756961a0c386b5c66db258c0d3d0a2f",
   "mandatory": false,
-  "published_at": "2026-07-14T20:00:00+08:00",
+  "published_at": "2026-07-17T00:22:46+08:00",
   "release_notes": [
-    "成品表 B 列自动识别黑猫投函和黑猫宅急便，分别写入 A 和 0。",
-    "文件粘贴生成在后台执行，进度动画至少显示 2 秒，窗口保持响应。"
+    "文件粘贴进度按实际读取、排序和写入行数显示，支持暂停、继续与结束任务。",
+    "成品表按单 SKU（*1 和 *N）与多 SKU 分为独立 Excel，每份最多 999 条。",
+    "扫码验单兼容更多扫码枪输入方式，并增加强制错误警示音。"
   ]
 }
