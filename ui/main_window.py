@@ -79,6 +79,13 @@ class ExcelConversionWorker(QObject):
             self.failed.emit(str(error))
 
 
+class ExcelProgressDialog(QDialog):
+    """Keeps the task controls visible when the user presses Escape."""
+
+    def reject(self):
+        return
+
+
 class ScrollPage(QScrollArea):
     def __init__(self):
         super().__init__()
@@ -189,6 +196,7 @@ class MainWindow(QMainWindow):
         self.excel_cancel_button = None
         self.excel_conversion_control = None
         self.excel_conversion_cancelled = False
+        self.excel_quit_after_cancellation = False
         self.excel_pending_result = None
         self.excel_pending_error = None
         self.auto_update_timer = QTimer(self)
@@ -298,6 +306,21 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     def quit_from_tray(self):
+        if self.excel_conversion_thread and self.excel_conversion_thread.isRunning():
+            self.excel_quit_after_cancellation = True
+            if self.excel_conversion_control:
+                self.excel_conversion_control.cancel()
+            if self.excel_pause_button:
+                self.excel_pause_button.setEnabled(False)
+            if self.excel_cancel_button:
+                self.excel_cancel_button.setEnabled(False)
+            if self.excel_progress_status:
+                self.excel_progress_status.setText("正在结束任务，完成后将退出软件...")
+            return
+
+        self.finish_application_quit()
+
+    def finish_application_quit(self):
         self.force_quit = True
         self.save_settings()
         if self.tray_icon:
@@ -2087,7 +2110,7 @@ class MainWindow(QMainWindow):
         self.excel_conversion_thread.start()
 
     def show_excel_progress_dialog(self):
-        dialog = QDialog(self)
+        dialog = ExcelProgressDialog(self)
         dialog.setWindowTitle("正在生成上传表")
         dialog.setWindowModality(Qt.ApplicationModal)
         dialog.setWindowFlag(Qt.WindowCloseButtonHint, False)
@@ -2251,6 +2274,9 @@ class MainWindow(QMainWindow):
     def clear_excel_conversion_worker(self):
         self.excel_conversion_worker = None
         self.excel_conversion_thread = None
+        if self.excel_quit_after_cancellation:
+            self.excel_quit_after_cancellation = False
+            self.finish_application_quit()
 
     def save_settings(self):
         if hasattr(self, "batch_size"):

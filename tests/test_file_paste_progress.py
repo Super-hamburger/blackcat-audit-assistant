@@ -146,6 +146,54 @@ class FilePasteProgressTest(unittest.TestCase):
             window.close()
             app.processEvents()
 
+    def test_progress_dialog_ignores_escape_rejection(self):
+        app = QApplication.instance() or QApplication([])
+        dialog = main_window.ExcelProgressDialog()
+        dialog.show()
+        app.processEvents()
+
+        dialog.reject()
+
+        self.assertTrue(dialog.isVisible())
+        dialog.close()
+
+    def test_quit_from_tray_cancels_active_conversion_before_quitting(self):
+        control = ConversionControl()
+
+        class Thread:
+            @staticmethod
+            def isRunning():
+                return True
+
+        window = type("TrayWindow", (), {})()
+        window.excel_conversion_thread = Thread()
+        window.excel_conversion_control = control
+        window.excel_pause_button = None
+        window.excel_cancel_button = None
+        window.excel_progress_status = None
+        window.excel_quit_after_cancellation = False
+
+        with patch.object(main_window.QApplication, "quit") as application_quit:
+            main_window.MainWindow.quit_from_tray(window)
+
+        self.assertTrue(control.cancelled)
+        self.assertTrue(window.excel_quit_after_cancellation)
+        application_quit.assert_not_called()
+
+    def test_thread_cleanup_finishes_a_pending_tray_quit(self):
+        window = type("TrayWindow", (), {})()
+        window.excel_conversion_worker = object()
+        window.excel_conversion_thread = object()
+        window.excel_quit_after_cancellation = True
+        completed = []
+        window.finish_application_quit = lambda: completed.append(True)
+
+        main_window.MainWindow.clear_excel_conversion_worker(window)
+
+        self.assertIsNone(window.excel_conversion_worker)
+        self.assertIsNone(window.excel_conversion_thread)
+        self.assertEqual(completed, [True])
+
 
 if __name__ == "__main__":
     unittest.main()
