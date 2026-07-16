@@ -87,6 +87,7 @@ class ScanInputController(QObject):
         self.input_widget = input_widget
         self.submit_callback = submit_callback
         self.first_input_at = None
+        self.last_input_at = None
         self.auto_submit_timer = QTimer(self)
         self.auto_submit_timer.setSingleShot(True)
         self.auto_submit_timer.setInterval(SCAN_AUTO_SUBMIT_DELAY_MS)
@@ -109,13 +110,15 @@ class ScanInputController(QObject):
             self.cancel()
             return
 
+        now = time.monotonic()
         if self.first_input_at is None:
-            self.first_input_at = time.monotonic()
+            self.first_input_at = now
+        self.last_input_at = now
         if len(text) >= SCAN_AUTO_SUBMIT_MIN_LENGTH:
             self.auto_submit_timer.start()
 
     def submit_if_fast_input(self):
-        elapsed_ms = int((time.monotonic() - self.first_input_at) * 1000) if self.first_input_at else 0
+        elapsed_ms = int((self.last_input_at - self.first_input_at) * 1000) if self.last_input_at else 0
         if (
             len(self.input_widget.text()) >= SCAN_AUTO_SUBMIT_MIN_LENGTH
             and elapsed_ms <= SCAN_AUTO_SUBMIT_MAX_DURATION_MS
@@ -125,12 +128,14 @@ class ScanInputController(QObject):
     def submit(self):
         self.auto_submit_timer.stop()
         self.first_input_at = None
+        self.last_input_at = None
         self.submit_callback()
         self.input_widget.setFocus()
 
     def cancel(self):
         self.auto_submit_timer.stop()
         self.first_input_at = None
+        self.last_input_at = None
 
 
 class MainWindow(QMainWindow):

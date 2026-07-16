@@ -40,6 +40,16 @@ class ScanInputCompatibilityTest(unittest.TestCase):
 
         self.assertEqual(self.submissions, ["ORDER-100"])
 
+    def test_input_completed_within_one_second_submits_after_idle_delay(self):
+        code = "ORDER-1000"
+        for index, character in enumerate(code):
+            QTest.keyClick(self.input_widget, character)
+            if index < len(code) - 1:
+                QTest.qWait(95)
+        QTest.qWait(200)
+
+        self.assertEqual(self.submissions, [code])
+
     def test_slow_input_waits_for_enter(self):
         QTest.keyClick(self.input_widget, "O")
         QTest.qWait(1100)
