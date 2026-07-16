@@ -1,10 +1,14 @@
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 
 from modules.file_paste.converter import (
+    ConversionCancelled,
+    ConversionControl,
     MARK_ADDRESS_OVERFLOW,
     MARK_QUANTITY_ISSUE,
     NEW_BLACKCAT_HEADERS,
@@ -208,6 +212,97 @@ class UploadConverterTest(unittest.TestCase):
         self.assertTrue(values[1][14].endswith("101号室"))
         self.assertEqual(result["address_overflow_count"], 1)
         self.assertEqual(fills["O2"], color_suffix(MARK_ADDRESS_OVERFLOW))
+
+    def test_converter_reports_actual_read_and_write_row_progress(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "one-piece.xlsx"
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            self.create_workbook(source_path, headers, [
+                self.one_piece_row("PROGRESS-1", "sku-a", 1, "1-1"),
+                self.one_piece_row("PROGRESS-2", "sku-b", 1, "2-1"),
+                self.one_piece_row("PROGRESS-3", "sku-c", 1, "3-1"),
+            ])
+            events = []
+
+            result = UploadConverter().convert(
+                source_path,
+                Path(temp_dir) / "output",
+                open_after=False,
+                progress_callback=events.append,
+            )
+
+        reading = [event for event in events if event["phase"] == "reading"]
+        writing = [event for event in events if event["phase"] == "writing"]
+        self.assertEqual(reading[-1]["current"], 3)
+        self.assertEqual(reading[-1]["total"], 3)
+        self.assertEqual(writing[-1]["current"], result["row_count"])
+        self.assertEqual(writing[-1]["total"], result["row_count"])
+        self.assertTrue(any(event["phase"] == "saving" for event in events))
+
+    def test_converter_pauses_between_rows_and_resumes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "one-piece.xlsx"
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            self.create_workbook(source_path, headers, [
+                self.one_piece_row("PAUSE-1", "sku-a", 1, "1-1"),
+                self.one_piece_row("PAUSE-2", "sku-b", 1, "2-1"),
+            ])
+            control = ConversionControl()
+            first_row_written = threading.Event()
+            completed = threading.Event()
+            result_box = {}
+
+            def record_progress(event):
+                if event["phase"] == "writing" and event["current"] == 1:
+                    control.pause()
+                    first_row_written.set()
+
+            def convert():
+                result_box["result"] = UploadConverter().convert(
+                    source_path,
+                    Path(temp_dir) / "output",
+                    open_after=False,
+                    progress_callback=record_progress,
+                    control=control,
+                )
+                completed.set()
+
+            worker = threading.Thread(target=convert)
+            worker.start()
+            self.assertTrue(first_row_written.wait(3))
+            time.sleep(0.1)
+            self.assertFalse(completed.is_set())
+            control.resume()
+            worker.join(5)
+
+        self.assertTrue(completed.is_set())
+        self.assertEqual(result_box["result"]["row_count"], 2)
+
+    def test_converter_discards_output_when_cancelled(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "one-piece.xlsx"
+            output_dir = Path(temp_dir) / "output"
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            self.create_workbook(source_path, headers, [
+                self.one_piece_row("CANCEL-1", "sku-a", 1, "1-1"),
+                self.one_piece_row("CANCEL-2", "sku-b", 1, "2-1"),
+            ])
+            control = ConversionControl()
+
+            def cancel_after_first_row(event):
+                if event["phase"] == "writing" and event["current"] == 1:
+                    control.cancel()
+
+            with self.assertRaises(ConversionCancelled):
+                UploadConverter().convert(
+                    source_path,
+                    output_dir,
+                    open_after=False,
+                    progress_callback=cancel_after_first_row,
+                    control=control,
+                )
+
+            self.assertEqual(list(output_dir.glob("*.xlsx")), [])
 
 
 if __name__ == "__main__":

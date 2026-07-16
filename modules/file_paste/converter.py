@@ -3,6 +3,8 @@ from datetime import datetime
 import os
 from pathlib import Path
 import re
+import threading
+import time
 import unicodedata
 
 from openpyxl.styles import PatternFill
@@ -28,6 +30,60 @@ MARK_MISSING_REQUIRED = PatternFill("solid", fgColor="F4CCCC")
 MARK_SHIPMENT_TYPE_ISSUE = PatternFill("solid", fgColor="F4CCCC")
 
 TEXT_COLUMNS = ("A", "B", "I", "K", "L", "M", "N", "O", "P", "AB", "AC", "AD")
+PROGRESS_REPORT_INTERVAL = 50
+
+
+class ConversionCancelled(Exception):
+    """Raised when the user ends an in-progress file conversion."""
+
+
+class ConversionControl:
+    """Thread-safe pause and cancellation control shared by UI and converter."""
+
+    def __init__(self):
+        self._paused = threading.Event()
+        self._cancelled = threading.Event()
+
+    @property
+    def paused(self):
+        return self._paused.is_set()
+
+    @property
+    def cancelled(self):
+        return self._cancelled.is_set()
+
+    def pause(self):
+        self._paused.set()
+
+    def resume(self):
+        self._paused.clear()
+
+    def cancel(self):
+        self._cancelled.set()
+        self._paused.clear()
+
+    def checkpoint(self):
+        while self._paused.is_set():
+            if self._cancelled.wait(0.03):
+                raise ConversionCancelled()
+        if self._cancelled.is_set():
+            raise ConversionCancelled()
+
+
+def report_progress(callback, phase, message, current=None, total=None, indeterminate=False):
+    if not callback:
+        return
+    callback({
+        "phase": phase,
+        "message": message,
+        "current": current,
+        "total": total,
+        "indeterminate": indeterminate,
+    })
+
+
+def should_report_progress(current, total):
+    return current == 1 or current == total or current % PROGRESS_REPORT_INTERVAL == 0
 
 
 def norm(value):
@@ -154,11 +210,7 @@ def clone_template_row(sheet, source_row, target_row):
         target = sheet.cell(target_row, column)
         target.value = source.value
         if source.has_style:
-            target._style = copy(source._style)
-        if source.number_format:
-            target.number_format = source.number_format
-        if source.alignment:
-            target.alignment = copy(source.alignment)
+            target._style = source._style
 
 
 def set_text(sheet, coordinate, value):
@@ -168,148 +220,204 @@ def set_text(sheet, coordinate, value):
 
 
 class UploadConverter:
-    def convert(self, source_path, output_dir, open_after=True):
+    def convert(self, source_path, output_dir, open_after=True, progress_callback=None, control=None):
         source_path = Path(source_path)
         output_dir = ensure_writable_dir(output_dir, "output")
+        control = control or ConversionControl()
 
         from openpyxl import load_workbook
 
-        source_book = load_workbook(source_path, data_only=True)
-        source_sheet = source_book.worksheets[0]
-        header_map = build_header_map(source_sheet)
+        source_book = None
+        output_book = None
+        output_path = None
+        saved = False
+        try:
+            report_progress(progress_callback, "opening", "正在打开 Excel 文件...", indeterminate=True)
+            source_book = load_workbook(source_path, data_only=True, read_only=True)
+            control.checkpoint()
+            source_sheet = source_book.worksheets[0]
+            header_map = build_header_map(source_sheet)
 
-        if has_headers(header_map, ONE_PIECE_HEADERS):
-            source_type = "一件代发表格"
-            read_row = self.read_one_piece_row
-        elif has_headers(header_map, NEW_BLACKCAT_HEADERS):
-            source_type = "黑猫新版表格"
-            read_row = self.read_new_blackcat_row
-        else:
-            raise ValueError("无法识别表格格式，需要黑猫新版表或一件代表。")
-
-        records = []
-        for source_index, row in enumerate(source_sheet.iter_rows(min_row=2), start=0):
-            record = read_row(row, header_map)
-            if record["reference"]:
-                record["source_index"] = source_index
-                records.append(record)
-
-        if source_type == "一件代发表格":
-            records.sort(
-                key=lambda record: (
-                    sku_quantity_group_key(record["sku"], record["quantity"]),
-                    shelf_sort_key(record["shelf"], record["source_index"]),
-                )
-            )
-
-        output_book, output_sheet = load_upload_template()
-        if output_sheet.max_row > 2:
-            output_sheet.delete_rows(3, output_sheet.max_row - 2)
-
-        split_count = 0
-        overflow_count = 0
-        missing_count = 0
-        quantity_issue_orders = []
-
-        for row_offset, record in enumerate(records):
-            output_row = row_offset + 2
-            if output_row > 2:
-                clone_template_row(output_sheet, 2, output_row)
-
-            address_text = (
-                combine_one_piece_address(record)
-                if source_type == "一件代发表格"
-                else combine_blackcat_address(record)
-            )
-            address = split_japanese_address(address_text)
-            if address["was_split"]:
-                split_count += 1
-            if address["overflow"]:
-                overflow_count += 1
-
-            if source_type == "一件代发表格":
-                item_text, quantity_issue = resolve_sku_quantities(
-                    record["sku"], record["quantity"]
-                )
-                ad_value, ac_value = split_item_text_for_ad(item_text)
-                ab_value = record["shelf"]
+            if has_headers(header_map, ONE_PIECE_HEADERS):
+                source_type = "一件代发表格"
+                read_row = self.read_one_piece_row
+            elif has_headers(header_map, NEW_BLACKCAT_HEADERS):
+                source_type = "黑猫新版表格"
+                read_row = self.read_new_blackcat_row
             else:
-                quantity_issue = None
-                ab_value = record["sku"]
-                ac_value = ""
-                ad_value = record["detail"]
+                raise ValueError("无法识别表格格式，需要黑猫新版表或一件代表。")
 
-            shipment_type, shipment_type_issue = resolve_shipment_type(
-                record["shipping_method"]
-                if source_type == "一件代发表格"
-                else record["remark"]
+            source_total = max(0, (source_sheet.max_row or 1) - 1)
+            report_progress(
+                progress_callback,
+                "reading",
+                f"正在读取数据（0/{source_total}）",
+                0,
+                source_total,
+            )
+            records = []
+            for source_index, row in enumerate(source_sheet.iter_rows(min_row=2), start=1):
+                control.checkpoint()
+                record = read_row(row, header_map)
+                if record["reference"]:
+                    record["source_index"] = source_index - 1
+                    records.append(record)
+                if should_report_progress(source_index, source_total):
+                    report_progress(
+                        progress_callback,
+                        "reading",
+                        f"正在读取数据（{source_index}/{source_total}）",
+                        source_index,
+                        source_total,
+                    )
+
+            control.checkpoint()
+            if source_type == "一件代发表格":
+                report_progress(progress_callback, "sorting", "正在按货架排序...", indeterminate=True)
+                records.sort(
+                    key=lambda record: (
+                        sku_quantity_group_key(record["sku"], record["quantity"]),
+                        shelf_sort_key(record["shelf"], record["source_index"]),
+                    )
+                )
+
+            control.checkpoint()
+            output_book, output_sheet = load_upload_template()
+            if output_sheet.max_row > 2:
+                output_sheet.delete_rows(3, output_sheet.max_row - 2)
+
+            split_count = 0
+            overflow_count = 0
+            missing_count = 0
+            quantity_issue_orders = []
+            total_records = len(records)
+            report_progress(
+                progress_callback,
+                "writing",
+                f"正在写入上传表（0/{total_records}）",
+                0,
+                total_records,
             )
 
-            if quantity_issue:
-                quantity_issue_orders.append(record["reference"])
+            for row_offset, record in enumerate(records, start=1):
+                control.checkpoint()
+                output_row = row_offset + 1
+                if output_row > 2:
+                    clone_template_row(output_sheet, 2, output_row)
 
-            values = {
-                "A": record["reference"],
-                "B": shipment_type,
-                "E": datetime.now().strftime("%Y%m%d"),
-                "I": record["phone"],
-                "K": record["postal"],
-                "L": address["L"],
-                "M": address["M"],
-                "N": address["N"],
-                "O": address["O"],
-                "P": record["recipient"],
-                "AB": ab_value,
-                "AC": ac_value,
-                "AD": ad_value,
-            }
-            for column, value in values.items():
-                set_text(output_sheet, f"{column}{output_row}", value)
-
-            if address["was_split"]:
-                for column in ("L", "M", "N", "O"):
-                    if address[column]:
-                        output_sheet[f"{column}{output_row}"].fill = MARK_ADDRESS_SPLIT
-            if address["overflow"]:
-                output_sheet[f"O{output_row}"].fill = MARK_ADDRESS_OVERFLOW
-            if quantity_issue:
-                output_sheet[f"AD{output_row}"].fill = MARK_QUANTITY_ISSUE
-            if shipment_type_issue:
-                output_sheet[f"B{output_row}"].fill = MARK_SHIPMENT_TYPE_ISSUE
-
-            missing_columns = [
-                column
-                for column, value in (
-                    ("I", record["phone"]),
-                    ("K", record["postal"]),
-                    ("L", address["L"]),
-                    ("P", record["recipient"]),
+                address_text = (
+                    combine_one_piece_address(record)
+                    if source_type == "一件代发表格"
+                    else combine_blackcat_address(record)
                 )
-                if not value
-            ]
-            if missing_columns:
-                missing_count += 1
-                for column in missing_columns:
-                    output_sheet[f"{column}{output_row}"].fill = MARK_MISSING_REQUIRED
+                address = split_japanese_address(address_text)
+                if address["was_split"]:
+                    split_count += 1
+                if address["overflow"]:
+                    overflow_count += 1
 
-        output_path = output_dir / f"黑猫上传表_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        output_book.save(output_path)
-        source_book.close()
-        output_book.close()
+                if source_type == "一件代发表格":
+                    item_text, quantity_issue = resolve_sku_quantities(
+                        record["sku"], record["quantity"]
+                    )
+                    ad_value, ac_value = split_item_text_for_ad(item_text)
+                    ab_value = record["shelf"]
+                else:
+                    quantity_issue = None
+                    ab_value = record["sku"]
+                    ac_value = ""
+                    ad_value = record["detail"]
 
-        if open_after:
-            os.startfile(output_path)
+                shipment_type, shipment_type_issue = resolve_shipment_type(
+                    record["shipping_method"]
+                    if source_type == "一件代发表格"
+                    else record["remark"]
+                )
 
-        return {
-            "output_path": str(output_path),
-            "row_count": len(records),
-            "split_count": split_count,
-            "missing_count": missing_count,
-            "address_overflow_count": overflow_count,
-            "quantity_issue_count": len(quantity_issue_orders),
-            "quantity_issue_orders": quantity_issue_orders,
-            "source_type": source_type,
-        }
+                if quantity_issue:
+                    quantity_issue_orders.append(record["reference"])
+
+                values = {
+                    "A": record["reference"],
+                    "B": shipment_type,
+                    "E": datetime.now().strftime("%Y%m%d"),
+                    "I": record["phone"],
+                    "K": record["postal"],
+                    "L": address["L"],
+                    "M": address["M"],
+                    "N": address["N"],
+                    "O": address["O"],
+                    "P": record["recipient"],
+                    "AB": ab_value,
+                    "AC": ac_value,
+                    "AD": ad_value,
+                }
+                for column, value in values.items():
+                    set_text(output_sheet, f"{column}{output_row}", value)
+
+                if address["was_split"]:
+                    for column in ("L", "M", "N", "O"):
+                        if address[column]:
+                            output_sheet[f"{column}{output_row}"].fill = MARK_ADDRESS_SPLIT
+                if address["overflow"]:
+                    output_sheet[f"O{output_row}"].fill = MARK_ADDRESS_OVERFLOW
+                if quantity_issue:
+                    output_sheet[f"AD{output_row}"].fill = MARK_QUANTITY_ISSUE
+                if shipment_type_issue:
+                    output_sheet[f"B{output_row}"].fill = MARK_SHIPMENT_TYPE_ISSUE
+
+                missing_columns = [
+                    column
+                    for column, value in (
+                        ("I", record["phone"]),
+                        ("K", record["postal"]),
+                        ("L", address["L"]),
+                        ("P", record["recipient"]),
+                    )
+                    if not value
+                ]
+                if missing_columns:
+                    missing_count += 1
+                    for column in missing_columns:
+                        output_sheet[f"{column}{output_row}"].fill = MARK_MISSING_REQUIRED
+
+                if should_report_progress(row_offset, total_records):
+                    report_progress(
+                        progress_callback,
+                        "writing",
+                        f"正在写入上传表（{row_offset}/{total_records}）",
+                        row_offset,
+                        total_records,
+                    )
+
+            control.checkpoint()
+            output_path = output_dir / f"黑猫上传表_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            report_progress(progress_callback, "saving", "正在保存上传表...", indeterminate=True)
+            output_book.save(output_path)
+            control.checkpoint()
+            saved = True
+
+            report_progress(progress_callback, "completed", "上传表生成完成", len(records), len(records))
+            if open_after:
+                os.startfile(output_path)
+
+            return {
+                "output_path": str(output_path),
+                "row_count": len(records),
+                "split_count": split_count,
+                "missing_count": missing_count,
+                "address_overflow_count": overflow_count,
+                "quantity_issue_count": len(quantity_issue_orders),
+                "quantity_issue_orders": quantity_issue_orders,
+                "source_type": source_type,
+            }
+        finally:
+            if source_book:
+                source_book.close()
+            if output_book:
+                output_book.close()
+            if output_path and output_path.exists() and not saved:
+                output_path.unlink()
 
     def read_one_piece_row(self, row, header_map):
         return {
