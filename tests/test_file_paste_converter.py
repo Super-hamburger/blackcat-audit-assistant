@@ -2,6 +2,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
@@ -9,12 +10,15 @@ from openpyxl import Workbook, load_workbook
 from modules.file_paste.converter import (
     ConversionCancelled,
     ConversionControl,
+    MAX_OUTPUT_ROWS,
     MARK_ADDRESS_OVERFLOW,
     MARK_QUANTITY_ISSUE,
     NEW_BLACKCAT_HEADERS,
     ONE_PIECE_HEADERS,
     UploadConverter,
+    chunk_records,
     clone_template_row,
+    split_records_by_sku_kind,
 )
 from modules.file_paste.template import load_upload_template
 
@@ -36,6 +40,18 @@ class UploadConverterTest(unittest.TestCase):
         result = UploadConverter().convert(source_path, Path(temp_dir), open_after=False)
         workbook = load_workbook(result["output_path"])
         return result, workbook.active
+
+    @staticmethod
+    def output_references(path):
+        workbook = load_workbook(path, data_only=True)
+        try:
+            return [
+                row[0]
+                for row in workbook.active.iter_rows(min_row=2, values_only=True)
+                if row[0]
+            ]
+        finally:
+            workbook.close()
 
     def convert_and_load_one_piece(self, rows):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -91,16 +107,18 @@ class UploadConverterTest(unittest.TestCase):
         ])
 
         self.assertEqual(
-            [row[0] for row in values[1:8]],
+            [row[0] for row in values[1:5]],
             [
                 "ONE-EARLY",
                 "ONE-LATE",
                 "MANY-EARLY",
                 "MANY-LATE",
-                "MULTI-EARLY",
-                "MULTI-LATE",
-                "MULTI-INVALID",
             ],
+        )
+        self.assertEqual(result["file_count"], 2)
+        self.assertEqual(
+            [Path(path).name for path in result["output_paths"]],
+            ["01_单SKU_第1份_4条.xlsx", "02_多SKU_第1份_3条.xlsx"],
         )
         self.assertEqual(result["quantity_issue_count"], 1)
 
@@ -305,6 +323,33 @@ class UploadConverterTest(unittest.TestCase):
 
             self.assertEqual(list(output_dir.glob("*.xlsx")), [])
 
+    def test_converter_discards_all_split_files_when_cancelled_after_first_save(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "one-piece.xlsx"
+            output_dir = Path(temp_dir) / "output"
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            self.create_workbook(source_path, headers, [
+                self.one_piece_row("CANCEL-SPLIT-1", "sku-a", 1, "1-1"),
+                self.one_piece_row("CANCEL-SPLIT-2", "sku-b", 1, "2-1"),
+            ])
+            control = ConversionControl()
+
+            def cancel_before_second_save(event):
+                if event["phase"] == "writing" and event["current"] == 2:
+                    control.cancel()
+
+            with patch("modules.file_paste.converter.MAX_OUTPUT_ROWS", 1):
+                with self.assertRaises(ConversionCancelled):
+                    UploadConverter().convert(
+                        source_path,
+                        output_dir,
+                        open_after=False,
+                        progress_callback=cancel_before_second_save,
+                        control=control,
+                    )
+
+            self.assertEqual(list(output_dir.iterdir()), [])
+
     def test_converter_handles_six_thousand_rows_with_monotonic_write_progress(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "large-one-piece.xlsx"
@@ -344,6 +389,54 @@ class UploadConverterTest(unittest.TestCase):
             self.assertEqual(sheet["AP3"].value, "01")
         finally:
             workbook.close()
+
+    def test_chunk_records_keeps_999_row_limit(self):
+        chunks = chunk_records(list(range(1200)), MAX_OUTPUT_ROWS)
+
+        self.assertEqual([len(chunk) for chunk in chunks], [999, 201])
+
+    def test_split_records_separates_single_and_multi_sku(self):
+        single, multi = split_records_by_sku_kind([
+            {"sku": "SKU-ONE", "quantity": 1},
+            {"sku": "SKU-MANY", "quantity": 3},
+            {"sku": "SKU-A,SKU-B", "quantity": "*1+*1"},
+        ])
+
+        self.assertEqual([record["sku"] for record in single], ["SKU-ONE", "SKU-MANY"])
+        self.assertEqual([record["sku"] for record in multi], ["SKU-A,SKU-B"])
+
+    def test_converter_creates_separate_single_and_multi_sku_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "one-piece.xlsx"
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            self.create_workbook(source_path, headers, [
+                self.one_piece_row("ONE-1", "sku-one-1", 1, "1-1"),
+                self.one_piece_row("ONE-2", "sku-one-2", 1, "2-1"),
+                self.one_piece_row("MANY-1", "sku-many-1", 3, "3-1"),
+                self.one_piece_row("MANY-2", "sku-many-2", 2, "4-1"),
+                self.one_piece_row("MULTI-1", "sku-a,sku-b", "*1+*1", "5-1"),
+                self.one_piece_row("MULTI-2", "sku-c,sku-d", "*1+*1", "6-1"),
+            ])
+
+            with patch("modules.file_paste.converter.MAX_OUTPUT_ROWS", 3):
+                result = UploadConverter().convert(
+                    source_path,
+                    Path(temp_dir) / "output",
+                    open_after=False,
+                )
+
+            self.assertEqual(
+                [Path(path).name for path in result["output_paths"]],
+                [
+                    "01_单SKU_第1份_3条.xlsx",
+                    "02_单SKU_第2份_1条.xlsx",
+                    "03_多SKU_第1份_2条.xlsx",
+                ],
+            )
+            self.assertTrue(Path(result["output_dir"]).is_dir())
+            self.assertEqual(self.output_references(result["output_paths"][0]), ["ONE-1", "ONE-2", "MANY-1"])
+            self.assertEqual(self.output_references(result["output_paths"][1]), ["MANY-2"])
+            self.assertEqual(self.output_references(result["output_paths"][2]), ["MULTI-1", "MULTI-2"])
 
 
 if __name__ == "__main__":

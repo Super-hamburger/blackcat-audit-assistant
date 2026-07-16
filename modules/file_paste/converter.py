@@ -30,6 +30,7 @@ MARK_SHIPMENT_TYPE_ISSUE = PatternFill("solid", fgColor="F4CCCC")
 
 TEXT_COLUMNS = ("A", "B", "I", "K", "L", "M", "N", "O", "P", "AB", "AC", "AD")
 PROGRESS_REPORT_INTERVAL = 50
+MAX_OUTPUT_ROWS = 999
 
 
 class ConversionCancelled(Exception):
@@ -115,6 +116,22 @@ def read(row, header_map, name):
 
 def split_skus(value):
     return [part.strip() for part in re.split(r"[,，]", norm(value)) if part.strip()]
+
+
+def split_records_by_sku_kind(records):
+    single = []
+    multi = []
+    for record in records:
+        if len(split_skus(record["sku"])) == 1:
+            single.append(record)
+        else:
+            multi.append(record)
+    return single, multi
+
+
+def chunk_records(records, size=None):
+    size = size or MAX_OUTPUT_ROWS
+    return [records[index:index + size] for index in range(0, len(records), size)]
 
 
 def resolve_sku_quantities(sku_text, quantity_value):
@@ -229,9 +246,9 @@ class UploadConverter:
         from openpyxl import load_workbook
 
         source_book = None
-        output_book = None
-        output_path = None
-        saved = False
+        batch_output_dir = None
+        output_paths = []
+        completed = False
         try:
             report_progress(progress_callback, "opening", "正在打开 Excel 文件...", indeterminate=True)
             source_book = load_workbook(source_path, data_only=True, read_only=True)
@@ -282,15 +299,6 @@ class UploadConverter:
                     )
                 )
 
-            control.checkpoint()
-            output_book, output_sheet = load_upload_template()
-            if output_sheet.max_row > 2:
-                output_sheet.delete_rows(3, output_sheet.max_row - 2)
-
-            split_count = 0
-            overflow_count = 0
-            missing_count = 0
-            quantity_issue_orders = []
             total_records = len(records)
             report_progress(
                 progress_callback,
@@ -300,110 +308,71 @@ class UploadConverter:
                 total_records,
             )
 
-            for row_offset, record in enumerate(records, start=1):
+            single_records, multi_records = split_records_by_sku_kind(records)
+            groups = [
+                ("单SKU", chunk)
+                for chunk in chunk_records(single_records)
+            ] + [
+                ("多SKU", chunk)
+                for chunk in chunk_records(multi_records)
+            ]
+            batch_output_dir = self.create_batch_output_dir(output_dir)
+            split_count = 0
+            overflow_count = 0
+            missing_count = 0
+            quantity_issue_orders = []
+            processed_records = 0
+            part_numbers = {"单SKU": 0, "多SKU": 0}
+
+            for file_sequence, (label, chunk) in enumerate(groups, start=1):
                 control.checkpoint()
-                output_row = row_offset + 1
-                if output_row > 2:
-                    clone_template_row(output_sheet, 2, output_row)
-
-                address_text = (
-                    combine_one_piece_address(record)
-                    if source_type == "一件代发表格"
-                    else combine_blackcat_address(record)
-                )
-                address = split_japanese_address(address_text)
-                if address["was_split"]:
-                    split_count += 1
-                if address["overflow"]:
-                    overflow_count += 1
-
-                if source_type == "一件代发表格":
-                    item_text, quantity_issue = resolve_sku_quantities(
-                        record["sku"], record["quantity"]
-                    )
-                    ad_value, ac_value = split_item_text_for_ad(item_text)
-                    ab_value = record["shelf"]
-                else:
-                    quantity_issue = None
-                    ab_value = record["sku"]
-                    ac_value = ""
-                    ad_value = record["detail"]
-
-                shipment_type, shipment_type_issue = resolve_shipment_type(
-                    record["shipping_method"]
-                    if source_type == "一件代发表格"
-                    else record["remark"]
-                )
-
-                if quantity_issue:
-                    quantity_issue_orders.append(record["reference"])
-
-                values = {
-                    "A": record["reference"],
-                    "B": shipment_type,
-                    "E": datetime.now().strftime("%Y%m%d"),
-                    "I": record["phone"],
-                    "K": record["postal"],
-                    "L": address["L"],
-                    "M": address["M"],
-                    "N": address["N"],
-                    "O": address["O"],
-                    "P": record["recipient"],
-                    "AB": ab_value,
-                    "AC": ac_value,
-                    "AD": ad_value,
-                }
-                for column, value in values.items():
-                    set_text(output_sheet, f"{column}{output_row}", value)
-
-                if address["was_split"]:
-                    for column in ("L", "M", "N", "O"):
-                        if address[column]:
-                            output_sheet[f"{column}{output_row}"].fill = MARK_ADDRESS_SPLIT
-                if address["overflow"]:
-                    output_sheet[f"O{output_row}"].fill = MARK_ADDRESS_OVERFLOW
-                if quantity_issue:
-                    output_sheet[f"AD{output_row}"].fill = MARK_QUANTITY_ISSUE
-                if shipment_type_issue:
-                    output_sheet[f"B{output_row}"].fill = MARK_SHIPMENT_TYPE_ISSUE
-
-                missing_columns = [
-                    column
-                    for column, value in (
-                        ("I", record["phone"]),
-                        ("K", record["postal"]),
-                        ("L", address["L"]),
-                        ("P", record["recipient"]),
-                    )
-                    if not value
-                ]
-                if missing_columns:
-                    missing_count += 1
-                    for column in missing_columns:
-                        output_sheet[f"{column}{output_row}"].fill = MARK_MISSING_REQUIRED
-
-                if should_report_progress(row_offset, total_records):
-                    report_progress(
+                part_numbers[label] += 1
+                output_book, output_sheet = load_upload_template()
+                try:
+                    if output_sheet.max_row > 2:
+                        output_sheet.delete_rows(3, output_sheet.max_row - 2)
+                    stats = self.write_records_to_sheet(
+                        output_sheet,
+                        chunk,
+                        source_type,
+                        control,
                         progress_callback,
-                        "writing",
-                        f"正在写入上传表（{row_offset}/{total_records}）",
-                        row_offset,
+                        processed_records,
                         total_records,
                     )
-
-            control.checkpoint()
-            output_path = output_dir / f"黑猫上传表_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-            report_progress(progress_callback, "saving", "正在保存上传表...", indeterminate=True)
-            output_book.save(output_path)
-            control.checkpoint()
-            saved = True
+                    split_count += stats["split_count"]
+                    overflow_count += stats["overflow_count"]
+                    missing_count += stats["missing_count"]
+                    quantity_issue_orders.extend(stats["quantity_issue_orders"])
+                    output_path = batch_output_dir / self.output_file_name(
+                        file_sequence,
+                        label,
+                        part_numbers[label],
+                        len(chunk),
+                    )
+                    output_paths.append(output_path)
+                    report_progress(
+                        progress_callback,
+                        "saving",
+                        f"正在保存第 {file_sequence}/{len(groups)} 份上传表...",
+                        indeterminate=True,
+                    )
+                    output_book.save(output_path)
+                    control.checkpoint()
+                    processed_records += len(chunk)
+                finally:
+                    output_book.close()
 
             report_progress(progress_callback, "completed", "上传表生成完成", len(records), len(records))
             if open_after:
-                os.startfile(output_path)
+                os.startfile(batch_output_dir)
+            completed = True
 
             return {
-                "output_path": str(output_path),
+                "output_path": str(output_paths[0]) if output_paths else str(batch_output_dir),
+                "output_dir": str(batch_output_dir),
+                "output_paths": [str(path) for path in output_paths],
+                "file_count": len(output_paths),
                 "row_count": len(records),
                 "split_count": split_count,
                 "missing_count": missing_count,
@@ -415,10 +384,130 @@ class UploadConverter:
         finally:
             if source_book:
                 source_book.close()
-            if output_book:
-                output_book.close()
-            if output_path and output_path.exists() and not saved:
-                output_path.unlink()
+            if batch_output_dir and not completed:
+                self.cleanup_batch_output(batch_output_dir)
+
+    @staticmethod
+    def output_file_name(sequence, label, part, count):
+        return f"{sequence:02d}_{label}_第{part}份_{count}条.xlsx"
+
+    @staticmethod
+    def create_batch_output_dir(output_dir):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        candidate = output_dir / f"黑猫上传表_{timestamp}"
+        suffix = 2
+        while candidate.exists():
+            candidate = output_dir / f"黑猫上传表_{timestamp}_{suffix}"
+            suffix += 1
+        candidate.mkdir(parents=True)
+        return candidate
+
+    @staticmethod
+    def cleanup_batch_output(batch_output_dir):
+        for path in batch_output_dir.iterdir():
+            if path.is_file():
+                path.unlink()
+        batch_output_dir.rmdir()
+
+    def write_records_to_sheet(
+        self,
+        output_sheet,
+        records,
+        source_type,
+        control,
+        progress_callback,
+        processed_records,
+        total_records,
+    ):
+        split_count = 0
+        overflow_count = 0
+        missing_count = 0
+        quantity_issue_orders = []
+        for row_offset, record in enumerate(records, start=1):
+            control.checkpoint()
+            output_row = row_offset + 1
+            if output_row > 2:
+                clone_template_row(output_sheet, 2, output_row)
+
+            address_text = (
+                combine_one_piece_address(record)
+                if source_type == "一件代发表格"
+                else combine_blackcat_address(record)
+            )
+            address = split_japanese_address(address_text)
+            if address["was_split"]:
+                split_count += 1
+            if address["overflow"]:
+                overflow_count += 1
+
+            if source_type == "一件代发表格":
+                item_text, quantity_issue = resolve_sku_quantities(
+                    record["sku"], record["quantity"]
+                )
+                ad_value, ac_value = split_item_text_for_ad(item_text)
+                ab_value = record["shelf"]
+            else:
+                quantity_issue = None
+                ab_value = record["sku"]
+                ac_value = ""
+                ad_value = record["detail"]
+
+            shipment_type, shipment_type_issue = resolve_shipment_type(
+                record["shipping_method"]
+                if source_type == "一件代发表格"
+                else record["remark"]
+            )
+            if quantity_issue:
+                quantity_issue_orders.append(record["reference"])
+
+            values = {
+                "A": record["reference"], "B": shipment_type,
+                "E": datetime.now().strftime("%Y%m%d"), "I": record["phone"],
+                "K": record["postal"], "L": address["L"], "M": address["M"],
+                "N": address["N"], "O": address["O"], "P": record["recipient"],
+                "AB": ab_value, "AC": ac_value, "AD": ad_value,
+            }
+            for column, value in values.items():
+                set_text(output_sheet, f"{column}{output_row}", value)
+
+            if address["was_split"]:
+                for column in ("L", "M", "N", "O"):
+                    if address[column]:
+                        output_sheet[f"{column}{output_row}"].fill = MARK_ADDRESS_SPLIT
+            if address["overflow"]:
+                output_sheet[f"O{output_row}"].fill = MARK_ADDRESS_OVERFLOW
+            if quantity_issue:
+                output_sheet[f"AD{output_row}"].fill = MARK_QUANTITY_ISSUE
+            if shipment_type_issue:
+                output_sheet[f"B{output_row}"].fill = MARK_SHIPMENT_TYPE_ISSUE
+
+            missing_columns = [
+                column for column, value in (
+                    ("I", record["phone"]), ("K", record["postal"]),
+                    ("L", address["L"]), ("P", record["recipient"]),
+                ) if not value
+            ]
+            if missing_columns:
+                missing_count += 1
+                for column in missing_columns:
+                    output_sheet[f"{column}{output_row}"].fill = MARK_MISSING_REQUIRED
+
+            current = processed_records + row_offset
+            if should_report_progress(current, total_records):
+                report_progress(
+                    progress_callback,
+                    "writing",
+                    f"正在写入上传表（{current}/{total_records}）",
+                    current,
+                    total_records,
+                )
+
+        return {
+            "split_count": split_count,
+            "overflow_count": overflow_count,
+            "missing_count": missing_count,
+            "quantity_issue_orders": quantity_issue_orders,
+        }
 
     def read_one_piece_row(self, row, header_map):
         return {
