@@ -45,6 +45,20 @@ def minimum_remaining_progress_ms(started_at, now, minimum_ms=EXCEL_PROGRESS_MIN
     return max(0, minimum_ms - elapsed_ms)
 
 
+def activate_english_keyboard_layout():
+    if sys.platform != "win32":
+        return False
+
+    try:
+        import ctypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        layout = user32.LoadKeyboardLayoutW("00000409", 1)
+        return bool(layout and user32.ActivateKeyboardLayout(layout, 0))
+    except (AttributeError, OSError):
+        return False
+
+
 class ExcelConversionWorker(QObject):
     finished = Signal(object)
     failed = Signal(str)
@@ -86,6 +100,7 @@ class ScanInputController(QObject):
         super().__init__(input_widget)
         self.input_widget = input_widget
         self.submit_callback = submit_callback
+        self.input_widget.setInputMethodHints(Qt.ImhLatinOnly | Qt.ImhPreferLowercase)
         self.first_input_at = None
         self.last_input_at = None
         self.auto_submit_timer = QTimer(self)
@@ -96,6 +111,8 @@ class ScanInputController(QObject):
         self.input_widget.installEventFilter(self)
 
     def eventFilter(self, watched, event):
+        if watched is self.input_widget and event.type() == QEvent.FocusIn:
+            activate_english_keyboard_layout()
         if (
             watched is self.input_widget
             and event.type() == QEvent.KeyPress
@@ -1015,7 +1032,7 @@ class MainWindow(QMainWindow):
         if result.get("result") == "pass":
             self.play_scan_success_sound()
         elif result.get("result") == "block":
-            self.play_error_sound()
+            self.play_scan_error_sound()
             if self.scan_block_enabled.isChecked():
                 show_warning(self, "异常拦截", result.get("message", "扫码异常。"))
         else:
@@ -2408,6 +2425,9 @@ class MainWindow(QMainWindow):
     def play_scan_success_sound(self):
         if self.is_sound_enabled():
             self.sound_engine.play(self.sound_path("scan_success.wav"))
+
+    def play_scan_error_sound(self):
+        self.sound_engine.play(self.sound_path("scan_error.wav"))
 
     def play_import_sound(self):
         if self.is_sound_enabled():
