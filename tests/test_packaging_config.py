@@ -17,6 +17,14 @@ class PortableBuildConfigurationTest(unittest.TestCase):
         for key in ("source_path", "finished_path", "pdf_paths", "output_dir"):
             self.assertIn(key, result.message)
 
+    def test_pdf_only_module_does_not_require_excel_paths(self):
+        result = ModuleRegistry().run("label_printing", {
+            "mode": "pdf_only_trial", "pdf_paths": ["missing.pdf"], "output_dir": "out",
+        })
+
+        self.assertFalse(result.ok)
+        self.assertNotIn("source_path", result.message)
+
     def test_portable_build_uses_resource_collecting_specification(self):
         root = Path(__file__).resolve().parents[1]
         script = (root / "installer" / "build_portable.bat").read_text(encoding="utf-8")

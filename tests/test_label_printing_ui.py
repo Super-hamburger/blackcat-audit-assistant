@@ -1,5 +1,6 @@
 import unittest
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from PySide6.QtWidgets import QApplication
@@ -60,6 +61,26 @@ class LabelPrintingUiTest(unittest.TestCase):
             self.assertFalse(window.label_split_types_combo.itemData(0))
             self.assertTrue(window.label_split_types_combo.itemData(1))
             self.assertIn("不选择时", window.label_output_dir_input.placeholderText())
+        finally:
+            window.close()
+            app.processEvents()
+
+    def test_trial_mode_hides_excel_inputs_and_routes_pdf_only_context(self):
+        app = self.application()
+        window = main_window.MainWindow()
+        try:
+            window.show()
+            app.processEvents()
+            window.label_input_mode.setCurrentIndex(
+                window.label_input_mode.findData("pdf_only_trial")
+            )
+            window.on_label_input_mode_changed()
+            window.label_pdf_input.setText(str(Path(__file__).resolve()))
+            window.label_output_dir_input.setText(str(Path.cwd()))
+
+            self.assertFalse(window.label_source_input.isVisible())
+            self.assertFalse(window.label_finished_input.isVisible())
+            self.assertEqual(window.get_label_printing_context()["mode"], "pdf_only_trial")
         finally:
             window.close()
             app.processEvents()
