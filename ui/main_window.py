@@ -837,6 +837,18 @@ class MainWindow(QMainWindow):
         scan_card.layout().addLayout(action_row)
         left_panel.addWidget(scan_card)
 
+        self.scan_progress_card = self.create_card("整体进度")
+        self.scan_progress_card.setObjectName("ScanProgressCard")
+        progress_row = QHBoxLayout()
+        self.scan_progress_bar = QProgressBar()
+        self.scan_progress_bar.setValue(0)
+        self.scan_progress_bar.setTextVisible(False)
+        self.scan_percent_label = QLabel("已匹配 0 / 0（0%）")
+        self.scan_percent_label.setObjectName("ScanLinkText")
+        progress_row.addWidget(self.scan_progress_bar, 1)
+        progress_row.addWidget(self.scan_percent_label)
+        self.scan_progress_card.layout().addLayout(progress_row)
+
         metric_row = QHBoxLayout()
         metric_row.setSpacing(10)
         self.scan_metric_total_card = self.info_card("本机已扫", "0", "当前电脑扫码数")
@@ -847,17 +859,26 @@ class MainWindow(QMainWindow):
         metric_row.addWidget(self.scan_metric_pass_card)
         metric_row.addWidget(self.scan_metric_fail_card)
         metric_row.addWidget(self.scan_metric_rate_card)
-        left_panel.addLayout(metric_row)
+        self.scan_progress_card.layout().addLayout(metric_row)
+        left_panel.addWidget(self.scan_progress_card)
 
         current_card = self.create_card("当前验单信息")
-        current_content = QHBoxLayout()
-        current_content.setSpacing(18)
+        self.scan_order_hero_frame = QFrame()
+        self.scan_order_hero_frame.setObjectName("ScanOrderHero")
+        hero_layout = QVBoxLayout(self.scan_order_hero_frame)
+        hero_layout.setContentsMargins(18, 16, 18, 16)
+        hero_layout.setSpacing(10)
+
+        hero_content = QHBoxLayout()
+        hero_content.setSpacing(18)
 
         order_col = QVBoxLayout()
         order_label = QLabel("出库单号")
         order_label.setObjectName("ScanFieldLabel")
         self.scan_current_order = QLabel("未选择")
-        self.scan_current_order.setObjectName("ScanFieldValue")
+        self.scan_current_order.setObjectName("ScanOrderHeroValue")
+        self.scan_current_order.setWordWrap(True)
+        self.scan_current_order.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.scan_order_time = QLabel("出库时间：--")
         self.scan_order_time.setObjectName("ScanMutedText")
         order_col.addWidget(order_label)
@@ -875,15 +896,9 @@ class MainWindow(QMainWindow):
         sku_col.addWidget(self.scan_current_sku)
         sku_col.addWidget(self.scan_product_name)
 
-        preview_box = QLabel("商品\n图片")
-        preview_box.setObjectName("ScanProductPreview")
-        preview_box.setAlignment(Qt.AlignCenter)
-        preview_box.setFixedSize(86, 76)
-
-        current_content.addLayout(order_col, 2)
-        current_content.addLayout(sku_col, 2)
-        current_content.addWidget(preview_box)
-        current_card.layout().addLayout(current_content)
+        hero_content.addLayout(order_col, 2)
+        hero_content.addLayout(sku_col, 2)
+        hero_layout.addLayout(hero_content)
 
         success_box = QFrame()
         success_box.setObjectName("ScanSuccessBanner")
@@ -896,7 +911,18 @@ class MainWindow(QMainWindow):
         success_layout.addWidget(self.scan_current_result)
         success_layout.addStretch()
         success_layout.addWidget(self.scan_success_time)
-        current_card.layout().addWidget(success_box)
+        hero_layout.addWidget(success_box)
+        current_card.layout().addWidget(self.scan_order_hero_frame)
+
+        preview_box = QLabel("商品\n图片")
+        preview_box.setObjectName("ScanProductPreview")
+        preview_box.setAlignment(Qt.AlignCenter)
+        preview_box.setFixedSize(86, 76)
+        preview_row = QHBoxLayout()
+        preview_row.addStretch()
+        preview_row.addWidget(preview_box)
+        current_card.layout().addLayout(preview_row)
+        self.set_scan_order_hero_style("ready")
         left_panel.addWidget(current_card)
 
         detail_card = self.create_card("出库单明细")
@@ -911,18 +937,6 @@ class MainWindow(QMainWindow):
         self.scan_detail_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.scan_detail_table.setMinimumHeight(190)
         detail_card.layout().addWidget(self.scan_detail_table)
-        progress_row = QHBoxLayout()
-        progress_label = QLabel("整体进度")
-        progress_label.setObjectName("ScanMutedText")
-        self.scan_progress_bar = QProgressBar()
-        self.scan_progress_bar.setValue(0)
-        self.scan_progress_bar.setTextVisible(False)
-        self.scan_percent_label = QLabel("0%")
-        self.scan_percent_label.setObjectName("ScanLinkText")
-        progress_row.addWidget(progress_label)
-        progress_row.addWidget(self.scan_progress_bar, 1)
-        progress_row.addWidget(self.scan_percent_label)
-        detail_card.layout().addLayout(progress_row)
         left_panel.addWidget(detail_card)
 
         workbench.addLayout(left_panel, 8)
@@ -1141,7 +1155,28 @@ class MainWindow(QMainWindow):
         table.setItem(row, col, item)
         return item
 
+    def set_scan_order_hero_style(self, state):
+        styles = {
+            "block": "background: #FEF2F2; border: 2px solid #FCA5A5; border-radius: 12px;",
+            "pass": "background: #ECFDF5; border: 2px solid #6EE7B7; border-radius: 12px;",
+            "ready": "background: #252C45; border: 2px solid #4F46B5; border-radius: 12px;",
+            "paused": "background: #FFFBEB; border: 2px solid #FCD34D; border-radius: 12px;",
+        }
+        order_colors = {
+            "block": "#B91C1C",
+            "pass": "#047857",
+            "ready": "#FFFFFF",
+            "paused": "#B45309",
+        }
+        self.scan_order_hero_frame.setStyleSheet(styles.get(state, styles["ready"]))
+        if hasattr(self, "scan_current_order"):
+            self.scan_current_order.setStyleSheet(
+                f"color: {order_colors.get(state, order_colors['ready'])};"
+            )
+
     def set_scan_status_visual(self, state, title, subtitle):
+        if hasattr(self, "scan_order_hero_frame"):
+            self.set_scan_order_hero_style(state)
         status_token = getattr(self, "_scan_status_visual_token", 0) + 1
         self._scan_status_visual_token = status_token
         self.scan_gate_status.setText(title)
@@ -1749,6 +1784,19 @@ class MainWindow(QMainWindow):
             color: #6D5DF6;
             font-size: 18px;
             font-weight: 900;
+        }
+        #ScanOrderHeroValue {
+            color: #FFFFFF;
+            font-size: 30px;
+            font-weight: 900;
+            letter-spacing: 1px;
+        }
+        #ScanOrderHero {
+            min-height: 150px;
+        }
+        #ScanProgressCard QProgressBar {
+            min-height: 16px;
+            border-radius: 8px;
         }
         #ScanProductPreview {
             color: #94A3B8;

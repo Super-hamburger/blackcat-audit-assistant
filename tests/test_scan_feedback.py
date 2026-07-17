@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QLineEdit, QProgressBar
+from PySide6.QtWidgets import QApplication, QCheckBox, QFrame, QLabel, QLineEdit, QProgressBar
 
 from ui.main_window import MainWindow, ScanInputController
 
@@ -75,6 +75,17 @@ class ScanFeedbackTest(unittest.TestCase):
         window.scan_percent_label = QLabel()
         return window
 
+    def status_window(self):
+        window = MainWindow.__new__(MainWindow)
+        window.scan_gate_status = QLabel()
+        window.scan_gate_sub = QLabel()
+        window.scan_gate_frame = QFrame()
+        window.scan_gate_icon = QLabel()
+        window.scan_current_result = QLabel()
+        window.scan_order_hero_frame = QFrame()
+        window.scan_current_order = QLabel()
+        return window
+
     def test_blocked_scan_does_not_open_a_modal_warning_and_refocuses_input(self):
         window = self.window_with_blocked_scan_result()
         try:
@@ -96,6 +107,23 @@ class ScanFeedbackTest(unittest.TestCase):
 
         self.assertEqual(window.scan_progress_bar.value(), 40)
         self.assertEqual(window.scan_percent_label.text(), "已匹配 2 / 5（40%）")
+
+    def test_scan_summary_keeps_progress_label_in_hero_format(self):
+        window = self.progress_window()
+
+        MainWindow.update_scan_summary(window, {
+            "total_scans": 4, "passed": 3, "failed": 1, "pass_rate": 75,
+            "matched_count": 3, "matchable_count": 8, "progress_percent": 38,
+        })
+
+        self.assertEqual(window.scan_percent_label.text(), "已匹配 3 / 8（38%）")
+
+    def test_scan_order_hero_changes_color_for_blocked_state(self):
+        window = self.status_window()
+
+        MainWindow.set_scan_status_visual(window, "block", "已拦截", "SKU 不属于当前出库单")
+
+        self.assertIn("#FEF2F2", window.scan_order_hero_frame.styleSheet())
 
     def test_blocked_scan_reset_restores_waiting_text_only_for_current_token(self):
         window = MainWindow.__new__(MainWindow)
