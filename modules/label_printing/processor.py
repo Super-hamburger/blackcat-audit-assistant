@@ -13,6 +13,7 @@ import fitz
 from openpyxl import load_workbook
 
 from modules.file_paste.converter import (
+    MARKER_MAX_LENGTH,
     report_progress,
     resolve_sku_quantities,
     shelf_sort_key,
@@ -31,7 +32,7 @@ FINISHED_HEADER_SCHEMAS = (
 FINISHED_CANONICAL_HEADERS = (
     "单号", "收件人电话", "收件邮编", "收件地址", "详细地址", "收件姓名",
 )
-MARKER_PATTERN = re.compile(r"LP\[([^\[\]/]+)/(\d+)\]")
+MARKER_PATTERN = re.compile(r"LP\[([^\[\]/]*)/([^\[\]/]*)\]")
 
 
 class LabelPrintingError(Exception):
@@ -43,7 +44,19 @@ def parse_pdf_label_marker(text, page_number):
     matches = MARKER_PATTERN.findall(raw_text)
     if len(matches) != raw_text.count("LP["):
         raise LabelPrintingError(f"第{page_number}页标记格式错误")
-    unique = {(shelf.strip(), customer_id.strip()) for shelf, customer_id in matches}
+    unique = set()
+    for shelf, customer_id in matches:
+        shelf, customer_id = shelf.strip(), customer_id.strip()
+        marker = f"LP[{shelf}/{customer_id}]"
+        invalid_component = (
+            not shelf
+            or not customer_id
+            or any(ch in f"{shelf}{customer_id}" for ch in "[]/")
+            or not customer_id.isdigit()
+        )
+        if invalid_component or len(marker) > MARKER_MAX_LENGTH:
+            raise LabelPrintingError(f"第{page_number}页标记格式错误")
+        unique.add((shelf, customer_id))
     if len(unique) > 1:
         raise LabelPrintingError(f"第{page_number}页存在多个不同 LP 标记")
     return next(iter(unique), None)

@@ -422,13 +422,13 @@ class PdfOnlyLabelPrintingProcessorTest(unittest.TestCase):
     def output_markers(path):
         return LabelPrintingProcessorTest.output_markers(path)
 
-    def run_pdf_only(self, scope="all", split_types=False, open_after=False):
+    def run_pdf_only(self, scope="all", split_types=False, open_after=False, output_dir=None):
         pdf_paths = [self.pdf_path]
         if self.second_pdf_path.exists():
             pdf_paths.append(self.second_pdf_path)
         return label_printing_processor.PdfOnlyLabelPrintProcessor(
             pdf_paths,
-            self.output_dir,
+            output_dir or self.output_dir,
             scope=scope,
             split_types=split_types,
             open_after=open_after,
@@ -462,6 +462,25 @@ class PdfOnlyLabelPrintingProcessorTest(unittest.TestCase):
 
         self.assertEqual(list(self.output_dir.glob("**/*.pdf")), [])
         self.assertTrue(any(self.output_dir.glob("**/异常报告.csv")))
+
+    def test_pdf_only_rejects_marker_outside_writer_contract_without_pdf(self):
+        invalid_markers = (
+            "LP[ /12027]",
+            "LP[2-1/ ]",
+            f"LP[{'x' * 41}/12027]",
+            "LP[2-1/customer]",
+            "LP[2/1/12027]",
+        )
+
+        for marker_index, marker in enumerate(invalid_markers):
+            with self.subTest(marker=marker):
+                self.make_pdf(self.pdf_path, [f"TEL a123456789012a {marker}"])
+                marker_output_dir = self.output_dir / str(marker_index)
+
+                with self.assertRaises(LabelPrintingError):
+                    self.run_pdf_only(output_dir=marker_output_dir)
+
+                self.assertEqual(list(marker_output_dir.glob("**/*.pdf")), [])
 
     def test_pdf_only_rejects_incomplete_marker_alongside_valid_marker(self):
         self.make_pdf(
