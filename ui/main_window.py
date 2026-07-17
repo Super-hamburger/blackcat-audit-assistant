@@ -819,7 +819,7 @@ class MainWindow(QMainWindow):
         self.scan_input.setPlaceholderText("▥   请扫描出库单号或 SKU")
         self.scan_input_controller = ScanInputController(self.scan_input, self.handle_scan_input)
         scan_card.layout().addWidget(self.scan_input)
-        hint = QLabel("将光标放在输入框内，使用扫码枪扫描。本机导入批次仅作核对依据，多电脑同时操作时以实时扫码提示为准。")
+        hint = QLabel("将光标放在输入框内，使用扫码枪扫描。当前导入批次仅作本机扫码核对依据，请以实时扫码提示为准。")
         hint.setObjectName("ScanMutedText")
         hint.setWordWrap(True)
         scan_card.layout().addWidget(hint)
@@ -1037,7 +1037,7 @@ class MainWindow(QMainWindow):
             "当前规则：先扫描出库单号，再扫描 SKU。\n"
             "Excel 自动识别字段：出库单号、SKU、数量、商品名称。\n"
             "匹配方式：去除空格并忽略大小写。\n"
-            "多电脑同时操作时，本页面只统计本机扫码结果。"
+            "本页面仅统计当前导入批次的本机扫码结果。"
         )
         if summary.get("loaded"):
             message += (
