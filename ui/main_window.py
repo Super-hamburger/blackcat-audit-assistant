@@ -819,7 +819,7 @@ class MainWindow(QMainWindow):
         self.scan_input.setPlaceholderText("▥   请扫描出库单号或 SKU")
         self.scan_input_controller = ScanInputController(self.scan_input, self.handle_scan_input)
         scan_card.layout().addWidget(self.scan_input)
-        hint = QLabel("将光标放在输入框内，使用扫码枪扫描。本机导入批次仅作核对依据，多电脑同时操作时以扫码结果和异常记录为准。")
+        hint = QLabel("将光标放在输入框内，使用扫码枪扫描。本机导入批次仅作核对依据，多电脑同时操作时以实时扫码提示为准。")
         hint.setObjectName("ScanMutedText")
         hint.setWordWrap(True)
         scan_card.layout().addWidget(hint)
@@ -933,11 +933,13 @@ class MainWindow(QMainWindow):
         status_card = self.create_card("放行状态")
         pass_box = QFrame()
         pass_box.setObjectName("ScanRightStatus")
+        self.scan_gate_frame = pass_box
         pass_layout = QHBoxLayout(pass_box)
         pass_layout.setContentsMargins(16, 16, 16, 16)
         pass_icon = QLabel("✓")
         pass_icon.setObjectName("ScanStatusIcon")
         pass_icon.setAlignment(Qt.AlignCenter)
+        self.scan_gate_icon = pass_icon
         gate_text = QVBoxLayout()
         self.scan_gate_status = QLabel("放行中")
         self.scan_gate_status.setObjectName("ScanGateStatus")
@@ -965,27 +967,9 @@ class MainWindow(QMainWindow):
         result_card.layout().addWidget(self.scan_log_table)
         right_panel.addWidget(result_card)
 
-        exception_card = self.create_card("异常记录")
-        exception_tip = QLabel("最近 5 条")
-        exception_tip.setObjectName("ScanMutedText")
-        exception_card.layout().addWidget(exception_tip)
-        self.scan_exception_table = QTableWidget(0, 4)
-        self.scan_exception_table.setObjectName("DataTable")
-        self.scan_exception_table.setHorizontalHeaderLabels(["时间", "出库单号", "SKU", "原因"])
-        self.scan_exception_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.scan_exception_table.verticalHeader().setVisible(False)
-        self.scan_exception_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.scan_exception_table.setMinimumHeight(210)
-        exception_card.layout().addWidget(self.scan_exception_table)
-
-        export_btn = QPushButton("导出异常记录")
-        export_btn.clicked.connect(self.export_scan_exceptions)
-        exception_card.layout().addWidget(export_btn)
-
         unmatched_export_btn = QPushButton("导出未匹配源数据")
         unmatched_export_btn.clicked.connect(self.export_scan_unmatched_source_rows)
-        exception_card.layout().addWidget(unmatched_export_btn)
-        right_panel.addWidget(exception_card)
+        right_panel.addWidget(unmatched_export_btn)
         right_panel.addStretch()
         workbench.addLayout(right_panel, 4)
         layout.addLayout(workbench)
@@ -1075,8 +1059,6 @@ class MainWindow(QMainWindow):
             self.play_scan_success_sound()
         elif result.get("result") == "block":
             self.play_scan_error_sound()
-            if self.scan_block_enabled.isChecked():
-                show_warning(self, "异常拦截", result.get("message", "扫码异常。"))
         else:
             self.play_click_sound()
         self.scan_input.setFocus()
@@ -1116,9 +1098,11 @@ class MainWindow(QMainWindow):
             self.set_info_card_value(self.scan_metric_rate_card, f"{summary.get('pass_rate', 0):.1f}%")
         else:
             self.set_info_card_value(self.scan_metric_rate_card, "--")
+        matched = int(summary.get("matched_count", 0) or 0)
+        matchable = int(summary.get("matchable_count", 0) or 0)
         percent = int(summary.get("progress_percent", 0) or 0)
         self.scan_progress_bar.setValue(percent)
-        self.scan_percent_label.setText(f"{percent}%")
+        self.scan_percent_label.setText(f"已匹配 {matched} / {matchable}（{percent}%）")
 
     def refresh_scan_detail_table(self, items):
         self.scan_detail_table.setRowCount(len(items))
@@ -1137,7 +1121,6 @@ class MainWindow(QMainWindow):
     def refresh_scan_log_tables(self):
         summary = self.scan_service.summary()
         logs = summary.get("recent_logs", [])[:8]
-        exceptions = summary.get("exception_logs", [])[:5]
 
         self.scan_log_table.setRowCount(len(logs))
         for row, item in enumerate(logs):
@@ -1152,18 +1135,6 @@ class MainWindow(QMainWindow):
                 if "成功" in value or "选中" in value:
                     table_item.setForeground(QColor("#059669"))
 
-        self.scan_exception_table.setRowCount(len(exceptions))
-        for row, item in enumerate(exceptions):
-            values = [
-                item.get("time", ""),
-                item.get("order_number", ""),
-                item.get("sku", ""),
-                item.get("reason", ""),
-            ]
-            for col, value in enumerate(values):
-                table_item = self.set_scan_table_item(self.scan_exception_table, row, col, value)
-                table_item.setForeground(QColor("#DC2626"))
-
     def set_scan_table_item(self, table, row, col, value):
         item = QTableWidgetItem(str(value))
         item.setToolTip(str(value))
@@ -1171,40 +1142,45 @@ class MainWindow(QMainWindow):
         return item
 
     def set_scan_status_visual(self, state, title, subtitle):
+        status_token = getattr(self, "_scan_status_visual_token", 0) + 1
+        self._scan_status_visual_token = status_token
         self.scan_gate_status.setText(title)
         self.scan_gate_sub.setText(subtitle)
         if state == "block":
+            self.scan_gate_frame.setStyleSheet(
+                "background: #FEF2F2; border: 2px solid #DC2626; border-radius: 10px;"
+            )
+            self.scan_gate_icon.setText("!")
+            self.scan_gate_icon.setStyleSheet("color: #DC2626; font-size: 24px; font-weight: 900;")
             self.scan_gate_status.setStyleSheet("color: #DC2626;")
             self.scan_gate_sub.setStyleSheet("color: #991B1B;")
             self.scan_current_result.setStyleSheet("color: #DC2626; font-weight: 900;")
+            QTimer.singleShot(
+                1200,
+                lambda: self._reset_scan_status_visual_if_current(status_token),
+            )
         elif state == "paused":
+            self.scan_gate_frame.setStyleSheet(
+                "background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 10px;"
+            )
+            self.scan_gate_icon.setText("Ⅱ")
+            self.scan_gate_icon.setStyleSheet("color: #D97706; font-size: 24px; font-weight: 900;")
             self.scan_gate_status.setStyleSheet("color: #D97706;")
             self.scan_gate_sub.setStyleSheet("color: #92400E;")
             self.scan_current_result.setStyleSheet("color: #D97706; font-weight: 900;")
         else:
+            self.scan_gate_frame.setStyleSheet(
+                "background: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 10px;"
+            )
+            self.scan_gate_icon.setText("✓")
+            self.scan_gate_icon.setStyleSheet("color: #059669; font-size: 24px; font-weight: 900;")
             self.scan_gate_status.setStyleSheet("color: #059669;")
             self.scan_gate_sub.setStyleSheet("color: #64748B;")
             self.scan_current_result.setStyleSheet("color: #059669; font-weight: 900;")
 
-    def export_scan_exceptions(self):
-        if not self.scan_service.exception_logs:
-            show_info(self, "提示", "当前没有异常记录。")
-            return
-        default_path = Path.home() / "Desktop" / f"扫码验单异常_{time.strftime('%Y%m%d_%H%M%S')}.xlsx"
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "导出异常记录",
-            str(default_path),
-            "Excel 文件 (*.xlsx)"
-        )
-        if not path:
-            return
-        try:
-            output = self.scan_service.export_exceptions(path)
-            show_info(self, "导出完成", f"异常记录已导出：\n{output}")
-        except Exception as error:
-            self.play_error_sound()
-            show_warning(self, "导出失败", str(error))
+    def _reset_scan_status_visual_if_current(self, status_token):
+        if getattr(self, "_scan_status_visual_token", None) == status_token:
+            self.set_scan_status_visual("ready", "放行中", "一扫正确，可以继续扫描")
 
     def export_scan_unmatched_source_rows(self):
         if not self.scan_service.loaded:

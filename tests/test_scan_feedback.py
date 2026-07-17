@@ -1,9 +1,11 @@
 import unittest
 import wave
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QLineEdit
+from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QLineEdit, QProgressBar
 
 from ui.main_window import MainWindow, ScanInputController
 
@@ -38,6 +40,54 @@ class ScanFeedbackTest(unittest.TestCase):
         MainWindow.play_scan_error_sound(window)
 
         self.assertEqual(window.sound_engine.paths, ["sounds/scan_error.wav"])
+
+    def window_with_blocked_scan_result(self):
+        window = MainWindow.__new__(MainWindow)
+        window.scan_input = QLineEdit()
+        window.scan_input.show()
+        window.scan_input.setText("UNKNOWN-SKU")
+        window.scan_block_enabled = QCheckBox()
+        window.scan_block_enabled.setChecked(True)
+        window.scan_service = SimpleNamespace(
+            scan=lambda code: {"result": "block", "message": "SKU 不在当前出库单中"},
+        )
+        window.apply_scan_result = lambda result: None
+        window.play_scan_error_sound = lambda: None
+        self.application.processEvents()
+        return window
+
+    def progress_window(self):
+        window = MainWindow.__new__(MainWindow)
+        window.scan_metric_total_card = object()
+        window.scan_metric_pass_card = object()
+        window.scan_metric_fail_card = object()
+        window.scan_metric_rate_card = object()
+        window.set_info_card_value = lambda card, value: None
+        window.scan_progress_bar = QProgressBar()
+        window.scan_percent_label = QLabel()
+        return window
+
+    def test_blocked_scan_does_not_open_a_modal_warning_and_refocuses_input(self):
+        window = self.window_with_blocked_scan_result()
+        try:
+            with patch("ui.main_window.show_warning") as warning:
+                MainWindow.handle_scan_input(window)
+
+            warning.assert_not_called()
+            self.assertTrue(window.scan_input.hasFocus())
+        finally:
+            window.scan_input.close()
+
+    def test_scan_summary_shows_matched_count_and_total(self):
+        window = self.progress_window()
+
+        MainWindow.update_scan_summary(window, {
+            "total_scans": 3, "passed": 2, "failed": 1, "pass_rate": 66.7,
+            "matched_count": 2, "matchable_count": 5, "progress_percent": 40,
+        })
+
+        self.assertEqual(window.scan_progress_bar.value(), 40)
+        self.assertEqual(window.scan_percent_label.text(), "已匹配 2 / 5（40%）")
 
     def test_scan_input_prefers_lowercase_latin_input(self):
         input_widget = QLineEdit()
