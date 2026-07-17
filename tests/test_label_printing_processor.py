@@ -60,3 +60,44 @@ class LabelPrintingProcessorTest(unittest.TestCase):
     def test_toukan_matches_postal_and_recipient(self):
         page = self.processor.match_page("投函 123-4567 Taro Yamada", 1)
         self.assertEqual((page.order.reference, page.label_type), ("REF-TOUKAN", "投函"))
+
+    def test_japanese_blackcat_finished_headers_map_internal_id_and_recipient_fields(self):
+        self.create_workbook(
+            self.finished_path,
+            [
+                "お客様管理番号(内部ID)", "お届け先電話番号", "お届け先郵便番号",
+                "お届け先住所", "お届け先住所（アパートマンション名）", "お届け先名",
+            ],
+            [["REF-ONE", "09012345678", "1000001", "Tokyo", "1-2-3", "Hanako Sato"]],
+        )
+
+        order = self.processor.load_orders()["REF-ONE"]
+
+        self.assertEqual(order.reference, "REF-ONE")
+        self.assertEqual(order.recipient_name, "Hanako Sato")
+        self.assertEqual(order.recipient_phone, "09012345678")
+        self.assertEqual(order.recipient_postal, "1000001")
+        self.assertEqual(order.recipient_address, "Tokyo 1-2-3")
+
+    def test_phone_ambiguity_reports_original_candidate_references(self):
+        self.create_workbook(
+            self.source_path,
+            ["客户编号", "参考单号", "SKU", "数量", "货架"],
+            [
+                ["12027", "REF-ONE", "SKU-ONE", 1, "2-1"],
+                ["12028", "REF-TWO", "SKU-TWO", 1, "1-1"],
+            ],
+        )
+        self.create_workbook(
+            self.finished_path,
+            ["单号", "收件人电话", "收件邮编", "收件地址", "详细地址", "收件姓名"],
+            [
+                ["REF-ONE", "09012345678", "1000001", "Tokyo", "1-2-3", "Hanako Sato"],
+                ["REF-TWO", "09012345678", "1000002", "Tokyo", "4-5-6", "Jiro Sato"],
+            ],
+        )
+
+        with self.assertRaisesRegex(
+            Exception, r"REF-ONE.*REF-TWO"
+        ):
+            self.processor.match_page("TEL 090-1234-5678", 0)

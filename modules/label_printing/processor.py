@@ -8,7 +8,14 @@ from modules.file_paste.converter import resolve_sku_quantities, split_skus
 
 
 RAW_REQUIRED_HEADERS = ("客户编号", "参考单号", "SKU", "数量", "货架")
-FINISHED_REQUIRED_HEADERS = (
+FINISHED_HEADER_SCHEMAS = (
+    ("单号", "收件人电话", "收件邮编", "收件地址", "详细地址", "收件姓名"),
+    (
+        "お客様管理番号(内部ID)", "お届け先電話番号", "お届け先郵便番号",
+        "お届け先住所", "お届け先住所（アパートマンション名）", "お届け先名",
+    ),
+)
+FINISHED_CANONICAL_HEADERS = (
     "单号", "收件人电话", "收件邮编", "收件地址", "详细地址", "收件姓名",
 )
 
@@ -104,6 +111,39 @@ class LabelPrintProcessor:
         finally:
             workbook.close()
 
+    @classmethod
+    def _read_finished_rows(cls, path):
+        workbook = load_workbook(path, data_only=True, read_only=True)
+        try:
+            sheet = workbook.worksheets[0]
+            headers = {
+                str(cell.value or "").strip(): cell.column - 1
+                for cell in sheet[1]
+                if str(cell.value or "").strip()
+            }
+            schema = next(
+                (
+                    candidate for candidate in FINISHED_HEADER_SCHEMAS
+                    if all(header in headers for header in candidate)
+                ),
+                None,
+            )
+            if schema is None:
+                expected = " 或 ".join(
+                    ", ".join(candidate) for candidate in FINISHED_HEADER_SCHEMAS
+                )
+                raise LabelPrintingError(f"完整成品表缺少必要列: {expected}")
+            rows = []
+            for values in sheet.iter_rows(min_row=2, values_only=True):
+                rows.append({
+                    canonical: "" if values[headers[actual]] is None
+                    else str(values[headers[actual]]).strip()
+                    for canonical, actual in zip(FINISHED_CANONICAL_HEADERS, schema)
+                })
+            return rows
+        finally:
+            workbook.close()
+
     def load_orders(self):
         source_rows = self._read_rows(
             self.source_path, RAW_REQUIRED_HEADERS, "原始一件代发表"
@@ -117,9 +157,7 @@ class LabelPrintProcessor:
                 raise LabelPrintingError(f"原始一件代发表参考单号重复: {reference}")
             source_by_reference[reference] = row
 
-        finished_rows = self._read_rows(
-            self.finished_path, FINISHED_REQUIRED_HEADERS, "完整成品表"
-        )
+        finished_rows = self._read_finished_rows(self.finished_path)
         orders = {}
         for row in finished_rows:
             reference = row["单号"]
@@ -172,16 +210,21 @@ class LabelPrintProcessor:
             ]
         else:
             page_digits = normalize_digits(text)
-            candidates = [
+            phone_candidates = [
                 order
                 for order in values
                 if (phone := normalize_digits(order.recipient_phone)) and phone in page_digits
             ]
-            if len(candidates) > 1:
-                candidates = [
+            candidates = phone_candidates
+            if len(phone_candidates) > 1:
+                narrowed_candidates = [
                     order for order in candidates
                     if self._matches_postal_and_name(text, order)
                 ]
+                candidates = (
+                    narrowed_candidates
+                    if len(narrowed_candidates) == 1 else phone_candidates
+                )
 
         if len(candidates) != 1:
             raise self._match_error(page_order, candidates)
