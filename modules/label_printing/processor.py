@@ -1,10 +1,19 @@
 from dataclasses import dataclass
+from datetime import datetime
+import csv
 from pathlib import Path
 import re
+from uuid import uuid4
 
+import fitz
 from openpyxl import load_workbook
 
-from modules.file_paste.converter import resolve_sku_quantities, split_skus
+from modules.file_paste.converter import (
+    report_progress,
+    resolve_sku_quantities,
+    shelf_sort_key,
+    split_skus,
+)
 
 
 RAW_REQUIRED_HEADERS = ("客户编号", "参考单号", "SKU", "数量", "货架")
@@ -64,7 +73,50 @@ def classify_sku(sku, quantity):
 
 
 def detect_label_type(text):
-    return "投函" if "投函" in str(text or "") else "宅急便"
+    normalized = str(text or "")
+    return "投函" if "投函" in normalized or "TOUKAN" in normalized.upper() else "宅急便"
+
+
+def extract_label_id(text):
+    match = re.search(r"a(\d{12})a", str(text or ""), re.IGNORECASE)
+    if match:
+        return match.group(1)
+    match = re.search(r"(?<!\d)(\d{12})(?!\d)", str(text or ""))
+    return match.group(1) if match else ""
+
+
+def page_sort_key(page):
+    return (*shelf_sort_key(page.order.shelf, page.input_order), page.input_order)
+
+
+def build_output_groups(pages, scope, split_types):
+    pages = [page for page in pages if page.order.sku_kind == "SKU×1"]
+    if scope == "all":
+        owners = [("全部客户", pages)]
+    elif scope == "by_customer":
+        grouped = {}
+        for page in pages:
+            grouped.setdefault(page.order.customer_id, []).append(page)
+        owners = [(f"客户{customer_id}", owner_pages) for customer_id, owner_pages in sorted(
+            grouped.items(), key=lambda item: shelf_sort_key(item[0], 0)
+        )]
+    else:
+        raise LabelPrintingError(f"不支持的打印范围: {scope}")
+
+    label_types = ("投函", "宅急便") if split_types else ("合并",)
+    groups = []
+    for owner, owner_pages in owners:
+        for label_type in label_types:
+            selected = (
+                owner_pages if label_type == "合并"
+                else [page for page in owner_pages if page.label_type == label_type]
+            )
+            if selected:
+                groups.append((
+                    f"{owner}_{label_type}_货架排序.pdf",
+                    sorted(selected, key=page_sort_key),
+                ))
+    return groups
 
 
 class LabelPrintProcessor:
@@ -236,3 +288,151 @@ class LabelPrintProcessor:
             label_id="",
             order=candidates[0],
         )
+
+    @staticmethod
+    def _task_output_dir(output_dir):
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        return output_dir / f"面单打印_{stamp}_{uuid4().hex[:8]}"
+
+    @staticmethod
+    def _write_exception_report(task_dir, problems):
+        task_dir.mkdir(parents=True, exist_ok=True)
+        report_path = task_dir / "异常报告.csv"
+        with report_path.open("w", newline="", encoding="utf-8-sig") as report_file:
+            writer = csv.DictWriter(
+                report_file,
+                fieldnames=("pdf_file", "page", "label_type", "candidates", "reason"),
+            )
+            writer.writeheader()
+            writer.writerows(problems)
+        return report_path
+
+    def _read_and_validate_pages(self, documents, progress_callback):
+        pages = []
+        problems = []
+        label_pages = {}
+        total_pages = sum(document.page_count for document in documents.values())
+        input_order = 0
+
+        for pdf_path, document in documents.items():
+            for page_index, pdf_page in enumerate(document):
+                text = pdf_page.get_text()
+                label_type = detect_label_type(text)
+                label_id = extract_label_id(text)
+                try:
+                    matched = self.match_page(text, input_order)
+                except LabelPrintingError as error:
+                    reason = str(error)
+                    _, separator, candidates = reason.partition("候选参考单号: ")
+                    problems.append({
+                        "pdf_file": pdf_path.name,
+                        "page": page_index + 1,
+                        "label_type": label_type,
+                        "candidates": candidates if separator else "",
+                        "reason": reason,
+                    })
+                else:
+                    page = LabelPage(
+                        pdf_path=pdf_path,
+                        page_index=page_index,
+                        input_order=input_order,
+                        label_type=label_type,
+                        label_id=label_id,
+                        order=matched.order,
+                    )
+                    pages.append(page)
+                    if label_id:
+                        duplicate = label_pages.get(label_id)
+                        if duplicate is not None:
+                            problems.append({
+                                "pdf_file": pdf_path.name,
+                                "page": page_index + 1,
+                                "label_type": label_type,
+                                "candidates": ", ".join((
+                                    duplicate.order.reference,
+                                    page.order.reference,
+                                )),
+                                "reason": f"重复面单: {label_id}",
+                            })
+                        else:
+                            label_pages[label_id] = page
+                input_order += 1
+                report_progress(
+                    progress_callback,
+                    "matching",
+                    f"正在匹配面单（{input_order}/{total_pages}）",
+                    input_order,
+                    total_pages,
+                )
+        return pages, problems, total_pages
+
+    @staticmethod
+    def _remove_created_files(created_paths):
+        for path in created_paths:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def run(self, progress_callback=None):
+        task_dir = self._task_output_dir(self.output_dir)
+        documents = {}
+        created_paths = []
+        try:
+            report_progress(
+                progress_callback, "opening", "正在读取面单 PDF...", indeterminate=True
+            )
+            for pdf_path in self.pdf_paths:
+                if pdf_path not in documents:
+                    documents[pdf_path] = fitz.open(pdf_path)
+
+            pages, problems, total_pages = self._read_and_validate_pages(
+                documents, progress_callback
+            )
+            if problems:
+                self._write_exception_report(task_dir, problems)
+                raise LabelPrintingError(problems[0]["reason"])
+
+            groups = build_output_groups(pages, self.scope, self.split_types)
+            task_dir.mkdir(parents=True, exist_ok=False)
+            report_progress(
+                progress_callback, "writing", "正在按货架生成打印文件...", 0, len(groups)
+            )
+            for group_index, (name, group_pages) in enumerate(groups, start=1):
+                output_path = task_dir / name
+                output_document = fitz.open()
+                try:
+                    for page in group_pages:
+                        output_document.insert_pdf(
+                            documents[page.pdf_path],
+                            from_page=page.page_index,
+                            to_page=page.page_index,
+                        )
+                    created_paths.append(output_path)
+                    output_document.save(output_path)
+                finally:
+                    output_document.close()
+                report_progress(
+                    progress_callback,
+                    "writing",
+                    f"正在生成打印文件（{group_index}/{len(groups)}）",
+                    group_index,
+                    len(groups),
+                )
+
+            report_progress(progress_callback, "completed", "面单打印文件生成完成", 1, 1)
+            return {
+                "output_dir": str(task_dir),
+                "output_paths": [str(path) for path in created_paths],
+                "total_pages": total_pages,
+                "matched_pages": len(pages),
+                "excluded_pages": sum(
+                    page.order.sku_kind != "SKU×1" for page in pages
+                ),
+            }
+        except Exception:
+            self._remove_created_files(created_paths)
+            raise
+        finally:
+            for document in documents.values():
+                document.close()
