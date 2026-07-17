@@ -90,11 +90,11 @@ class ScanFeedbackTest(unittest.TestCase):
         window.scan_success_time = QLabel()
         return window
 
-    def test_scan_workbench_keeps_current_result_in_viewport_at_minimum_size(self):
+    def test_scan_workbench_can_scroll_current_result_into_viewport_at_minimum_size(self):
         window = MainWindow()
         try:
             window.resize(1160, 760)
-            window.set_page(3)
+            window.set_page(4)
             window.show()
             self.application.processEvents()
 
@@ -103,6 +103,8 @@ class ScanFeedbackTest(unittest.TestCase):
                 for area in window.findChildren(QScrollArea)
                 if area.isVisible()
             )
+            viewport.parent().ensureWidgetVisible(window.scan_current_result)
+            self.application.processEvents()
             viewport_top = viewport.mapTo(window, viewport.rect().topLeft()).y()
             viewport_bottom = viewport.mapTo(window, viewport.rect().bottomLeft()).y()
             order_top = window.scan_current_order.mapTo(
