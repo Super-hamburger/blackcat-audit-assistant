@@ -87,6 +87,48 @@ class LabelPrintingProcessorTest(unittest.TestCase):
             self.output_dir, scope, split_types, False,
         ).run()
 
+    def create_sample_contract_fixture(self):
+        customer_counts = (("12027", 22), ("12028", 49), ("12029", 31))
+        source_rows = []
+        finished_rows = []
+        takkyubin_pages = []
+        toukan_pages = []
+        row_number = 0
+        for customer_id, count in customer_counts:
+            for _ in range(count):
+                row_number += 1
+                reference = f"SAMPLE-REF-{row_number:03d}"
+                phone = f"090{row_number:08d}"
+                postal = f"{1000000 + row_number:07d}"
+                recipient = f"Synthetic Recipient {row_number:03d}"
+                source_rows.append([
+                    customer_id, reference, f"SAMPLE-SKU-{row_number:03d}", 1,
+                    f"{(row_number - 1) % 12 + 1}-1",
+                ])
+                finished_rows.append([
+                    reference, phone, postal, "Synthetic City", "Unit 1", recipient,
+                ])
+                label_id = f"{100000000000 + row_number:012d}"
+                if row_number <= 60:
+                    takkyubin_pages.append(
+                        f"TEL {phone[:3]}-{phone[3:7]}-{phone[7:]} a{label_id}a"
+                    )
+                else:
+                    toukan_pages.append(f"TOUKAN {postal} {recipient} a{label_id}a")
+
+        self.create_workbook(
+            self.source_path,
+            ["客户编号", "参考单号", "SKU", "数量", "货架"],
+            source_rows,
+        )
+        self.create_workbook(
+            self.finished_path,
+            ["单号", "收件人电话", "收件邮编", "收件地址", "详细地址", "收件姓名"],
+            finished_rows,
+        )
+        self.create_pdf(self.pdf_paths[0], takkyubin_pages)
+        self.create_pdf(self.pdf_paths[1], toukan_pages)
+
     def run_processor_with_ambiguous_page(self):
         self.create_pdf(
             self.pdf_paths[0],
@@ -149,6 +191,20 @@ class LabelPrintingProcessorTest(unittest.TestCase):
         self.assertEqual([Path(path).name for path in result["output_paths"]], [
             "客户12027_宅急便_货架排序.pdf", "客户12028_投函_货架排序.pdf",
         ])
+
+    def test_sample_contract_customer_counts(self):
+        self.create_sample_contract_fixture()
+        result = self.run_processor(scope="all", split_types=True)
+
+        self.assertEqual((result["total_pages"], result["matched_pages"]), (102, 102))
+        self.assertEqual(
+            result["customer_page_counts"],
+            {"12027": 22, "12028": 49, "12029": 31},
+        )
+        self.assertEqual(
+            [len(self.output_markers(path)) for path in result["output_paths"]],
+            [42, 60],
+        )
 
     def test_ambiguous_page_writes_no_partial_pdf(self):
         with self.assertRaisesRegex(LabelPrintingError, "无法唯一匹配"):

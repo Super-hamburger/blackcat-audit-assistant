@@ -421,11 +421,18 @@ class LabelPrintProcessor:
                 )
 
             report_progress(progress_callback, "completed", "面单打印文件生成完成", 1, 1)
+            customer_page_counts = {}
+            for page in pages:
+                customer_id = page.order.customer_id
+                customer_page_counts[customer_id] = (
+                    customer_page_counts.get(customer_id, 0) + 1
+                )
             return {
                 "output_dir": str(task_dir),
                 "output_paths": [str(path) for path in created_paths],
                 "total_pages": total_pages,
                 "matched_pages": len(pages),
+                "customer_page_counts": customer_page_counts,
                 "excluded_pages": sum(
                     page.order.sku_kind != "SKU×1" for page in pages
                 ),

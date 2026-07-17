@@ -1,0 +1,85 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "import fitz",
+      "ok": true,
+      "message": ""
+    },
+    {
+      "name": "import pymupdf",
+      "ok": true,
+      "message": ""
+    },
+    {
+      "name": "import openpyxl",
+      "ok": true,
+      "message": ""
+    },
+    {
+      "name": "import core file safety modules",
+      "ok": true,
+      "message": ""
+    },
+    {
+      "name": "sound engine compatibility methods",
+      "ok": true,
+      "message": ""
+    },
+    {
+      "name": "update installer guarded entry",
+      "ok": true,
+      "message": "{'ok': False, 'message': '一键更新只能在打包后的软件中使用。源码运行时不会覆盖项目文件。'}"
+    },
+    {
+      "name": "discover business modules",
+      "ok": true,
+      "message": "['file_paste', 'label_compress', 'label_printing', 'scan_check']"
+    },
+    {
+      "name": "execute file_paste entry",
+      "ok": true,
+      "message": "file_paste module requires source_path. Existing UI still provides the full interactive workflow."
+    },
+    {
+      "name": "execute label_compress entry",
+      "ok": true,
+      "message": "label_compress module requires pdf_path/pdf_paths. Existing UI still provides the full interactive workflow."
+    },
+    {
+      "name": "execute label_printing entry",
+      "ok": true,
+      "message": "label_printing module requires: source_path, finished_path, pdf_paths, output_dir"
+    },
+    {
+      "name": "run file_paste sample workbook",
+      "ok": true,
+      "message": "文件粘贴完成"
+    },
+    {
+      "name": "run label_printing sample pdf",
+      "ok": true,
+      "message": "面单打印完成"
+    },
+    {
+      "name": "run label_compress sample pdf",
+      "ok": true,
+      "message": "面单压缩完成"
+    },
+    {
+      "name": "run label_compress multi-candidate pdf",
+      "ok": true,
+      "message": "面单压缩完成"
+    },
+    {
+      "name": "stop label_compress low-confidence pdf",
+      "ok": true,
+      "message": "面单压缩失败"
+    },
+    {
+      "name": "stop label_compress duplicate pdf",
+      "ok": true,
+      "message": "面单压缩失败"
+    }
+  ]
+}
