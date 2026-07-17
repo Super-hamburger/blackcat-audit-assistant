@@ -10,6 +10,7 @@ from openpyxl import Workbook, load_workbook
 from modules.file_paste.converter import (
     ConversionCancelled,
     ConversionControl,
+    ConversionError,
     MAX_OUTPUT_ROWS,
     MARK_ADDRESS_OVERFLOW,
     MARK_QUANTITY_ISSUE,
@@ -18,6 +19,7 @@ from modules.file_paste.converter import (
     UploadConverter,
     chunk_records,
     clone_template_row,
+    make_pdf_label_marker,
     split_records_by_sku_kind,
 )
 from modules.file_paste.template import load_upload_template
@@ -56,7 +58,7 @@ class UploadConverterTest(unittest.TestCase):
     def convert_and_load_one_piece(self, rows):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "one-piece.xlsx"
-            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式", "客户编号"]
             self.create_workbook(source_path, headers, rows)
             result, sheet = self.convert_and_load(source_path, temp_dir)
             values = [[cell.value for cell in row] for row in sheet.iter_rows()]
@@ -93,7 +95,40 @@ class UploadConverterTest(unittest.TestCase):
             "地址2": "101号室",
             "收件公司": "",
             "收件邮编": "1050011",
+            "客户编号": "12029",
         }
+
+    def test_make_pdf_label_marker_uses_fixed_format(self):
+        self.assertEqual(
+            make_pdf_label_marker("1-3-2-1", "12029", "REF-1"),
+            "LP[1-3-2-1/12029]",
+        )
+
+    def test_complete_sheet_replaces_ad_only_for_strict_single_sku(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "one-piece.xlsx"
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式", "客户编号"]
+            rows = [
+                {**self.one_piece_row("REF-ONE", "SKU-ONE", 1, "1-3-2-1"), "客户编号": "12029"},
+                {**self.one_piece_row("REF-MANY", "SKU-MANY", 2, "1-3-2-2"), "客户编号": "12029"},
+            ]
+            self.create_workbook(source_path, headers, rows)
+            result = UploadConverter().convert(source_path, Path(temp_dir), open_after=False)
+            complete_book = load_workbook(result["output_paths"][2], data_only=True)
+            try:
+                ad_values = [complete_book.active[f"AD{row}"].value for row in (2, 3)]
+            finally:
+                complete_book.close()
+
+        self.assertEqual(ad_values, ["LP[1-3-2-1/12029]", "SKU-MANY*2"])
+
+    def test_marker_rejects_invalid_components(self):
+        with self.assertRaisesRegex(ConversionError, "REF-BAD"):
+            make_pdf_label_marker("1/2", "12029", "REF-BAD")
+
+    def test_marker_rejects_a_value_over_fifty_characters(self):
+        with self.assertRaisesRegex(ConversionError, "REF-LONG"):
+            make_pdf_label_marker("1" * 45, "12029", "REF-LONG")
 
     def test_one_piece_sorts_sku_quantity_groups_before_shelf_order(self):
         result, values, _ = self.convert_and_load_one_piece([
@@ -149,7 +184,7 @@ class UploadConverterTest(unittest.TestCase):
         ])
 
         self.assertEqual(values[1][28], f"{long_sku}*1")
-        self.assertIsNone(values[1][29])
+        self.assertEqual(values[1][29], "LP[1-1/12029]")
 
     def test_blackcat_uses_template_header_sku_and_detail_columns(self):
         result, values, _ = self.convert_and_load_blackcat({
@@ -237,7 +272,7 @@ class UploadConverterTest(unittest.TestCase):
     def test_converter_reports_actual_read_and_write_row_progress(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "one-piece.xlsx"
-            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式", "客户编号"]
             self.create_workbook(source_path, headers, [
                 self.one_piece_row("PROGRESS-1", "sku-a", 1, "1-1"),
                 self.one_piece_row("PROGRESS-2", "sku-b", 1, "2-1"),
@@ -263,7 +298,7 @@ class UploadConverterTest(unittest.TestCase):
     def test_converter_pauses_between_rows_and_resumes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "one-piece.xlsx"
-            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式", "客户编号"]
             self.create_workbook(source_path, headers, [
                 self.one_piece_row("PAUSE-1", "sku-a", 1, "1-1"),
                 self.one_piece_row("PAUSE-2", "sku-b", 1, "2-1"),
@@ -303,7 +338,7 @@ class UploadConverterTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "one-piece.xlsx"
             output_dir = Path(temp_dir) / "output"
-            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式", "客户编号"]
             self.create_workbook(source_path, headers, [
                 self.one_piece_row("CANCEL-1", "sku-a", 1, "1-1"),
                 self.one_piece_row("CANCEL-2", "sku-b", 1, "2-1"),
@@ -329,7 +364,7 @@ class UploadConverterTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "one-piece.xlsx"
             output_dir = Path(temp_dir) / "output"
-            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式", "客户编号"]
             self.create_workbook(source_path, headers, [
                 self.one_piece_row("CANCEL-SPLIT-1", "sku-a", 1, "1-1"),
                 self.one_piece_row("CANCEL-SPLIT-2", "sku-b", 1, "2-1"),
@@ -355,7 +390,7 @@ class UploadConverterTest(unittest.TestCase):
     def test_converter_handles_six_thousand_rows_with_monotonic_write_progress(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "large-one-piece.xlsx"
-            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式", "客户编号"]
             rows = [
                 self.one_piece_row(f"LARGE-{index}", f"sku-{index}", 1, f"{index}-1")
                 for index in range(1, 6001)
@@ -417,7 +452,7 @@ class UploadConverterTest(unittest.TestCase):
     def test_converter_creates_sku_one_sku_many_and_complete_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "one-piece.xlsx"
-            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式", "客户编号"]
             self.create_workbook(source_path, headers, [
                 self.one_piece_row("ONE-1", "sku-one-1", 1, "1-1"),
                 self.one_piece_row("MANY-1", "sku-many-1", 3, "3-1"),
@@ -448,7 +483,7 @@ class UploadConverterTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "empty-one-piece.xlsx"
             output_dir = Path(temp_dir) / "output"
-            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式", "客户编号"]
             self.create_workbook(source_path, headers, [])
 
             with self.assertRaisesRegex(ValueError, "没有可生成的有效订单"):
@@ -460,7 +495,7 @@ class UploadConverterTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "one-piece.xlsx"
             output_dir = Path(temp_dir) / "output"
-            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
+            headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式", "客户编号"]
             self.create_workbook(source_path, headers, [
                 self.one_piece_row("SAVE-FAIL-1", "sku-a", 1, "1-1"),
                 self.one_piece_row("SAVE-FAIL-2", "sku-b", 1, "2-1"),

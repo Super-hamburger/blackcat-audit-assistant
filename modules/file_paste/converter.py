@@ -31,10 +31,15 @@ MARK_SHIPMENT_TYPE_ISSUE = PatternFill("solid", fgColor="F4CCCC")
 TEXT_COLUMNS = ("A", "B", "I", "K", "L", "M", "N", "O", "P", "AB", "AC", "AD")
 PROGRESS_REPORT_INTERVAL = 50
 MAX_OUTPUT_ROWS = 999
+MARKER_MAX_LENGTH = 50
 
 
 class ConversionCancelled(Exception):
     """Raised when the user ends an in-progress file conversion."""
+
+
+class ConversionError(Exception):
+    """Raised when an upload record cannot be converted safely."""
 
 
 class ConversionControl:
@@ -118,20 +123,38 @@ def split_skus(value):
     return [part.strip() for part in re.split(r"[,，]", norm(value)) if part.strip()]
 
 
+def make_pdf_label_marker(shelf, customer_id, reference):
+    shelf, customer_id = str(shelf or "").strip(), str(customer_id or "").strip()
+    invalid_component = (
+        not shelf
+        or not customer_id
+        or any(ch in f"{shelf}{customer_id}" for ch in "[]/")
+    )
+    if invalid_component:
+        raise ConversionError(f"参考单号 {reference} 的货架或客户编号不能生成 LP 标记")
+    marker = f"LP[{shelf}/{customer_id}]"
+    if len(marker) > MARKER_MAX_LENGTH:
+        raise ConversionError(f"参考单号 {reference} 的 LP 标记超过50字符")
+    return marker
+
+
+def is_strict_single_sku(record):
+    item_text, quantity_issue = resolve_sku_quantities(
+        record["sku"], record.get("quantity", "")
+    )
+    return (
+        len(split_skus(record["sku"])) == 1
+        and quantity_issue is None
+        and item_text.endswith("*1")
+    )
+
+
 def split_records_by_sku_kind(records):
     sku_one_records = []
     sku_many_or_multi_records = []
     for record in records:
-        item_text, quantity_issue = resolve_sku_quantities(
-            record["sku"], record.get("quantity", "")
-        )
-        sku_count = len(split_skus(record["sku"]))
-        is_sku_one = (
-            sku_count == 1
-            and quantity_issue is None
-            and item_text.endswith("*1")
-        )
-        (sku_one_records if is_sku_one else sku_many_or_multi_records).append(record)
+        target = sku_one_records if is_strict_single_sku(record) else sku_many_or_multi_records
+        target.append(record)
     return sku_one_records, sku_many_or_multi_records, list(records)
 
 
@@ -457,6 +480,10 @@ class UploadConverter:
                 )
                 ad_value, ac_value = split_item_text_for_ad(item_text)
                 ab_value = record["shelf"]
+                if is_strict_single_sku(record):
+                    ad_value = make_pdf_label_marker(
+                        record["shelf"], record["customer_id"], record["reference"]
+                    )
             else:
                 quantity_issue = None
                 ab_value = record["sku"]
@@ -531,6 +558,7 @@ class UploadConverter:
             "street": read(row, header_map, "地址"),
             "apartment": read(row, header_map, "地址2"),
             "shelf": read(row, header_map, "货架"),
+            "customer_id": read(row, header_map, "客户编号"),
             "sku": read(row, header_map, "SKU"),
             "quantity": read(row, header_map, "数量"),
             "shipping_method": read(row, header_map, "运输方式"),
