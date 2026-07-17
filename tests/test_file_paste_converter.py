@@ -107,18 +107,20 @@ class UploadConverterTest(unittest.TestCase):
         ])
 
         self.assertEqual(
-            [row[0] for row in values[1:5]],
+            [row[0] for row in values[1:3]],
             [
                 "ONE-EARLY",
                 "ONE-LATE",
-                "MANY-EARLY",
-                "MANY-LATE",
             ],
         )
-        self.assertEqual(result["file_count"], 2)
+        self.assertEqual(result["file_count"], 3)
         self.assertEqual(
             [Path(path).name for path in result["output_paths"]],
-            ["01_单SKU_第1份_4条.xlsx", "02_多SKU_第1份_3条.xlsx"],
+            [
+                "01_SKU×1_第1份_2条.xlsx",
+                "02_SKU×N和多SKU_第1份_5条.xlsx",
+                "03_完整成品表_第1份_7条.xlsx",
+            ],
         )
         self.assertEqual(result["quantity_issue_count"], 1)
 
@@ -395,27 +397,31 @@ class UploadConverterTest(unittest.TestCase):
 
         self.assertEqual([len(chunk) for chunk in chunks], [999, 201])
 
-    def test_split_records_separates_single_and_multi_sku(self):
-        single, multi = split_records_by_sku_kind([
+    def test_split_records_separates_sku_one_from_sku_many_or_multi(self):
+        sku_one, sku_many_or_multi, complete = split_records_by_sku_kind([
             {"sku": "SKU-ONE", "quantity": 1},
             {"sku": "SKU-MANY", "quantity": 3},
             {"sku": "SKU-A,SKU-B", "quantity": "*1+*1"},
+            {"sku": "SKU-UNKNOWN", "quantity": "bad"},
         ])
 
-        self.assertEqual([record["sku"] for record in single], ["SKU-ONE", "SKU-MANY"])
-        self.assertEqual([record["sku"] for record in multi], ["SKU-A,SKU-B"])
+        self.assertEqual([record["sku"] for record in sku_one], ["SKU-ONE"])
+        self.assertEqual(
+            [record["sku"] for record in sku_many_or_multi],
+            ["SKU-MANY", "SKU-A,SKU-B", "SKU-UNKNOWN"],
+        )
+        self.assertEqual([record["sku"] for record in complete], [
+            "SKU-ONE", "SKU-MANY", "SKU-A,SKU-B", "SKU-UNKNOWN",
+        ])
 
-    def test_converter_creates_separate_single_and_multi_sku_files(self):
+    def test_converter_creates_sku_one_sku_many_and_complete_files(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "one-piece.xlsx"
             headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式"]
             self.create_workbook(source_path, headers, [
                 self.one_piece_row("ONE-1", "sku-one-1", 1, "1-1"),
-                self.one_piece_row("ONE-2", "sku-one-2", 1, "2-1"),
                 self.one_piece_row("MANY-1", "sku-many-1", 3, "3-1"),
-                self.one_piece_row("MANY-2", "sku-many-2", 2, "4-1"),
                 self.one_piece_row("MULTI-1", "sku-a,sku-b", "*1+*1", "5-1"),
-                self.one_piece_row("MULTI-2", "sku-c,sku-d", "*1+*1", "6-1"),
             ])
 
             with patch("modules.file_paste.converter.MAX_OUTPUT_ROWS", 3):
@@ -428,15 +434,15 @@ class UploadConverterTest(unittest.TestCase):
             self.assertEqual(
                 [Path(path).name for path in result["output_paths"]],
                 [
-                    "01_单SKU_第1份_3条.xlsx",
-                    "02_单SKU_第2份_1条.xlsx",
-                    "03_多SKU_第1份_2条.xlsx",
+                    "01_SKU×1_第1份_1条.xlsx",
+                    "02_SKU×N和多SKU_第1份_2条.xlsx",
+                    "03_完整成品表_第1份_3条.xlsx",
                 ],
             )
             self.assertTrue(Path(result["output_dir"]).is_dir())
-            self.assertEqual(self.output_references(result["output_paths"][0]), ["ONE-1", "ONE-2", "MANY-1"])
-            self.assertEqual(self.output_references(result["output_paths"][1]), ["MANY-2"])
-            self.assertEqual(self.output_references(result["output_paths"][2]), ["MULTI-1", "MULTI-2"])
+            self.assertEqual(self.output_references(result["output_paths"][0]), ["ONE-1"])
+            self.assertEqual(self.output_references(result["output_paths"][1]), ["MANY-1", "MULTI-1"])
+            self.assertEqual(self.output_references(result["output_paths"][2]), ["ONE-1", "MANY-1", "MULTI-1"])
 
     def test_converter_rejects_a_source_with_no_valid_orders(self):
         with tempfile.TemporaryDirectory() as temp_dir:

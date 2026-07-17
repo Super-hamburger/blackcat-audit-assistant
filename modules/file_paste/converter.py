@@ -119,14 +119,20 @@ def split_skus(value):
 
 
 def split_records_by_sku_kind(records):
-    single = []
-    multi = []
+    sku_one_records = []
+    sku_many_or_multi_records = []
     for record in records:
-        if len(split_skus(record["sku"])) == 1:
-            single.append(record)
-        else:
-            multi.append(record)
-    return single, multi
+        item_text, quantity_issue = resolve_sku_quantities(
+            record["sku"], record.get("quantity", "")
+        )
+        sku_count = len(split_skus(record["sku"]))
+        is_sku_one = (
+            sku_count == 1
+            and quantity_issue is None
+            and item_text.endswith("*1")
+        )
+        (sku_one_records if is_sku_one else sku_many_or_multi_records).append(record)
+    return sku_one_records, sku_many_or_multi_records, list(records)
 
 
 def chunk_records(records, size=None):
@@ -310,13 +316,13 @@ class UploadConverter:
                 total_records,
             )
 
-            single_records, multi_records = split_records_by_sku_kind(records)
+            sku_one_records, sku_many_or_multi_records, complete_records = split_records_by_sku_kind(records)
             groups = [
-                ("单SKU", chunk)
-                for chunk in chunk_records(single_records)
+                ("SKU×1", chunk) for chunk in chunk_records(sku_one_records)
             ] + [
-                ("多SKU", chunk)
-                for chunk in chunk_records(multi_records)
+                ("SKU×N和多SKU", chunk) for chunk in chunk_records(sku_many_or_multi_records)
+            ] + [
+                ("完整成品表", chunk) for chunk in chunk_records(complete_records)
             ]
             batch_output_dir = self.create_batch_output_dir(output_dir)
             split_count = 0
@@ -324,11 +330,12 @@ class UploadConverter:
             missing_count = 0
             quantity_issue_orders = []
             processed_records = 0
-            part_numbers = {"单SKU": 0, "多SKU": 0}
+            part_numbers = {"SKU×1": 0, "SKU×N和多SKU": 0, "完整成品表": 0}
 
             for file_sequence, (label, chunk) in enumerate(groups, start=1):
                 control.checkpoint()
                 part_numbers[label] += 1
+                track_metrics = label != "完整成品表"
                 output_book, output_sheet = load_upload_template()
                 try:
                     if output_sheet.max_row > 2:
@@ -338,14 +345,15 @@ class UploadConverter:
                         chunk,
                         source_type,
                         control,
-                        progress_callback,
+                        progress_callback if track_metrics else None,
                         processed_records,
                         total_records,
                     )
-                    split_count += stats["split_count"]
-                    overflow_count += stats["overflow_count"]
-                    missing_count += stats["missing_count"]
-                    quantity_issue_orders.extend(stats["quantity_issue_orders"])
+                    if track_metrics:
+                        split_count += stats["split_count"]
+                        overflow_count += stats["overflow_count"]
+                        missing_count += stats["missing_count"]
+                        quantity_issue_orders.extend(stats["quantity_issue_orders"])
                     output_path = batch_output_dir / self.output_file_name(
                         file_sequence,
                         label,
@@ -361,7 +369,8 @@ class UploadConverter:
                     )
                     output_book.save(output_path)
                     control.checkpoint()
-                    processed_records += len(chunk)
+                    if track_metrics:
+                        processed_records += len(chunk)
                 finally:
                     output_book.close()
 
