@@ -15,4 +15,4 @@
 
 SHA256：`89e2ae976c98618ff620f7a9cb075376a0217e44cca013e7fefb60d77a6d1c0f`
 
-该校验和与 `updater/update_manifest.example.json` 的 `package_sha256` 一致。本地 4.4.4 发布包已生成、尚未上传 GitHub，远程自动更新尚不可用。
+该校验和与 `updater/update_manifest.example.json` 的 `package_sha256` 一致。正式版 4.4.4 已正式发布，可通过应用的自动更新功能获取。

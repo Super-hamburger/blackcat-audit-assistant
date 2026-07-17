@@ -50,10 +50,11 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIsNotNone(release_notes_hash)
         self.assertEqual(manifest["package_sha256"], release_notes_hash.group(1))
         self.assertEqual(sha256_file(package_path), release_notes_hash.group(1))
-        self.assertIn(
-            "本地 4.4.4 发布包已生成、尚未上传 GitHub，远程自动更新尚不可用",
-            release_notes,
-        )
+        self.assertIn("4.4.4 已正式发布", release_notes)
+        self.assertIn("自动更新", release_notes)
+        self.assertIn("4.4.4 已正式发布", manifest["message"])
+        self.assertIn("自动更新", manifest["message"])
+        self.assertEqual("2026-07-18T03:31:48+08:00", manifest["published_at"])
         self.assertEqual("4.4.4", file_paste_module["version"])
         self.assertEqual("4.4.4", label_printing_module["version"])
         self.assertEqual("V4.4.4", changelog[0]["version"])
