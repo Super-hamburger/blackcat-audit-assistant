@@ -52,10 +52,7 @@ class ScanCheckService:
     passed: int = 0
     failed: int = 0
     recent_logs: list = field(default_factory=list)
-    exception_logs: list = field(default_factory=list)
     source_headers: list = field(default_factory=list)
-    source_rows_by_key: dict = field(default_factory=dict)
-    source_rows_by_sku: dict = field(default_factory=dict)
     eligible_rows: list = field(default_factory=list)
     pending_row_indexes_by_key: dict = field(default_factory=dict)
     matched_row_indexes: set = field(default_factory=set)
@@ -90,8 +87,6 @@ class ScanCheckService:
         orders = {}
         order_keys = {}
         source_headers = list(rows[header_index])
-        source_rows_by_key = {}
-        source_rows_by_sku = {}
         eligible_rows = []
         pending_row_indexes_by_key = {}
         source_column_count = max(len(source_headers), *(len(row) for row in rows[header_index + 1 :]))
@@ -112,8 +107,6 @@ class ScanCheckService:
                 continue
 
             source_row = list(row) + [None] * (source_column_count - len(row))
-            source_rows_by_key.setdefault((order_key, sku_key), []).append(source_row)
-            source_rows_by_sku.setdefault(sku_key, []).append(source_row)
             source_row_index = len(eligible_rows)
             eligible_rows.append(source_row)
             pending_row_indexes_by_key.setdefault((order_key, sku_key), deque()).append(source_row_index)
@@ -155,10 +148,7 @@ class ScanCheckService:
         self.passed = 0
         self.failed = 0
         self.recent_logs = []
-        self.exception_logs = []
         self.source_headers = source_headers
-        self.source_rows_by_key = source_rows_by_key
-        self.source_rows_by_sku = source_rows_by_sku
         self.eligible_rows = eligible_rows
         self.pending_row_indexes_by_key = pending_row_indexes_by_key
         self.matched_row_indexes = set()
@@ -201,23 +191,23 @@ class ScanCheckService:
             return self._state("order_selected", "已选中出库单。", order_key=code)
 
         if not self.current_order:
-            return self._fail(shown_code, "", "请先扫描出库单号", scanned_content=shown_code)
+            return self._fail(shown_code, "", "请先扫描出库单号")
 
         order = self.orders.get(self.current_order)
         if not order:
             self.current_order = ""
-            return self._fail(shown_code, "", "当前出库单不存在", scanned_content=shown_code)
+            return self._fail(shown_code, "", "当前出库单不存在")
 
         item = order["items"].get(code)
         if not item:
-            return self._fail(order["order_number"], shown_code, "SKU 不属于当前出库单", scanned_content=shown_code)
+            return self._fail(order["order_number"], shown_code, "SKU 不属于当前出库单")
 
         if item.scanned >= item.quantity:
-            return self._fail(order["order_number"], item.sku, "该 SKU 已扫够数量", scanned_content=shown_code)
+            return self._fail(order["order_number"], item.sku, "该 SKU 已扫够数量")
 
         pending_indexes = self.pending_row_indexes_by_key.get((self.current_order, code))
         if not pending_indexes:
-            return self._fail(order["order_number"], item.sku, "该 SKU 已扫够数量", scanned_content=shown_code)
+            return self._fail(order["order_number"], item.sku, "该 SKU 已扫够数量")
 
         item.scanned += 1
         self.matched_row_indexes.add(pending_indexes.popleft())
@@ -239,18 +229,16 @@ class ScanCheckService:
         return self.orders[self.current_order]["order_number"]
 
     def progress_percent(self):
-        items = self.current_items()
-        total = sum(item.quantity for item in items)
-        if total <= 0:
-            return 0
-        scanned = sum(min(item.scanned, item.quantity) for item in items)
-        return int(round(scanned * 100 / total))
+        total = len(self.eligible_rows)
+        return int(round(len(self.matched_row_indexes) * 100 / total)) if total else 0
 
     def summary(self):
         order_count = len(self.orders)
         item_count = sum(len(order["items"]) for order in self.orders.values())
         total_quantity = sum(item.quantity for order in self.orders.values() for item in order["items"].values())
         pass_rate = (self.passed / self.total_scans * 100) if self.total_scans else 0
+        matched_count = len(self.matched_row_indexes)
+        matchable_count = len(self.eligible_rows)
         return {
             "loaded": self.loaded,
             "active": self.active,
@@ -265,30 +253,12 @@ class ScanCheckService:
             "passed": self.passed,
             "failed": self.failed,
             "pass_rate": pass_rate,
+            "matched_count": matched_count,
+            "matchable_count": matchable_count,
             "progress_percent": self.progress_percent(),
-            "unmatched_row_count": len(self.eligible_rows) - len(self.matched_row_indexes),
+            "unmatched_row_count": matchable_count - matched_count,
             "recent_logs": self.recent_logs[:50],
-            "exception_logs": self.exception_logs[:50],
         }
-
-    def export_exceptions(self, output_path):
-        output = Path(output_path)
-        if output.suffix.lower() != ".xlsx":
-            output = output.with_suffix(".xlsx")
-        output.parent.mkdir(parents=True, exist_ok=True)
-        from openpyxl import Workbook
-
-        workbook = Workbook()
-        sheet = workbook.active
-        sheet.title = "异常记录"
-        trace_headers = ["异常时间", "异常原因", "扫码内容"]
-        sheet.append(self.source_headers + trace_headers)
-        for item in self.exception_logs:
-            source_row = item.get("source_row") or [None] * len(self.source_headers)
-            sheet.append(source_row + [item["time"], item["reason"], item["scanned_content"]])
-        workbook.save(output)
-        workbook.close()
-        return str(output)
 
     def unmatched_source_rows(self):
         return [
@@ -393,11 +363,10 @@ class ScanCheckService:
             "items": [item.__dict__ | {"status": item.status} for item in self.current_items()],
         }
 
-    def _fail(self, order_number, sku, reason, count_scan=True, scanned_content=None):
+    def _fail(self, order_number, sku, reason, count_scan=True):
         if count_scan:
             self.total_scans += 1
             self.failed += 1
-            self._append_exception(order_number, sku, reason, scanned_content)
             self._append_log(order_number, sku, "异常拦截")
         result = self._state("blocked", reason)
         result["result"] = "block"
@@ -415,29 +384,6 @@ class ScanCheckService:
             "result": result,
         })
         self.recent_logs = self.recent_logs[:100]
-
-    def _append_exception(self, order_number, sku, reason, scanned_content=None):
-        order_key = normalize_code(order_number)
-        sku_key = normalize_code(sku)
-        source_row = None
-        if order_key and sku_key:
-            matches = self.source_rows_by_key.get((order_key, sku_key), [])
-            if matches:
-                source_row = matches[0]
-        if source_row is None and sku_key:
-            matches = self.source_rows_by_sku.get(sku_key, [])
-            if matches:
-                source_row = matches[0]
-        self.exception_logs.insert(0, {
-            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "order_number": order_number,
-            "sku": sku,
-            "reason": reason,
-            "scanned_content": scanned_content if scanned_content is not None else sku,
-            "source_row": source_row,
-        })
-        self.exception_logs = self.exception_logs[:200]
-
 
 def run(context):
     context = context or {}

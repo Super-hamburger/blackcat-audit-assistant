@@ -8,45 +8,32 @@ from modules.scan_check.module import ScanCheckService
 
 
 class ScanCheckExceptionExportTest(unittest.TestCase):
-    def test_export_exceptions_preserves_full_source_rows_and_trace_fields(self):
+    def service_loaded_with_one_order_and_two_skus(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "source.xlsx"
-            output_path = Path(temp_dir) / "exceptions.xlsx"
             workbook = Workbook()
             sheet = workbook.active
-            sheet.append(["出库单号", "SKU", "数量", "商品名称", "客户", "备注"])
-            sheet.append(["SO-100", "SKU-01", 1, "测试商品", "客户 A", "原始备注"])
+            sheet.append(["出库单号", "SKU", "数量"])
+            sheet.append(["SO-100", "SKU-01", 1])
+            sheet.append(["SO-100", "SKU-02", 1])
             workbook.save(source_path)
 
             service = ScanCheckService()
             service.load_excel(source_path)
-            service.start()
-            service.scan("SO-100")
-            service.scan("SKU-01")
-            service.scan("SKU-01")
-            service.scan("SKU-01")
-            service.scan("UNKNOWN-SKU")
+            return service
 
-            service.export_exceptions(output_path)
+    def test_blocked_scan_is_not_persisted_and_summary_reports_match_counts(self):
+        service = self.service_loaded_with_one_order_and_two_skus()
+        service.start()
+        service.scan("SO-100")
+        service.scan("SKU-01")
+        blocked = service.scan("UNKNOWN-SKU")
 
-            exported = load_workbook(output_path, data_only=True).active
-            rows = list(exported.iter_rows(values_only=True))
-            self.assertEqual(
-                rows[0],
-                ("出库单号", "SKU", "数量", "商品名称", "客户", "备注", "异常时间", "异常原因", "扫码内容"),
-            )
-
-            source_rows = [row for row in rows[1:] if row[0] == "SO-100"]
-            self.assertEqual(len(source_rows), 2)
-            for row in source_rows:
-                self.assertEqual(row[:6], ("SO-100", "SKU-01", 1, "测试商品", "客户 A", "原始备注"))
-                self.assertEqual(row[7], "该 SKU 已扫够数量")
-                self.assertEqual(row[8], "SKU-01")
-
-            unmatched_rows = [row for row in rows[1:] if row[8] == "UNKNOWN-SKU"]
-            self.assertEqual(len(unmatched_rows), 1)
-            self.assertEqual(unmatched_rows[0][:6], (None, None, None, None, None, None))
-            self.assertEqual(unmatched_rows[0][7], "SKU 不属于当前出库单")
+        self.assertEqual(blocked["result"], "block")
+        self.assertFalse(hasattr(service, "exception_logs"))
+        self.assertEqual(service.summary()["matched_count"], 1)
+        self.assertEqual(service.summary()["matchable_count"], 2)
+        self.assertEqual(service.summary()["progress_percent"], 50)
 
     def test_export_unmatched_source_rows_ignores_quantity_two_rows(self):
         with tempfile.TemporaryDirectory() as temp_dir:
