@@ -2371,12 +2371,21 @@ class MainWindow(QMainWindow):
         total_pages = int(result.get("total_pages", 0))
         matched_pages = int(result.get("matched_pages", 0))
         excluded_pages = int(result.get("excluded_pages", 0))
-        printed_pages = max(0, matched_pages - excluded_pages)
+        printed_pages = int(result.get("printed_pages", max(0, matched_pages - excluded_pages)))
+        customer_count = int(result.get("customer_count", len(result.get("customer_page_counts", {}))))
+        type_counts = result.get("type_counts", {})
+        toukan_count = int(type_counts.get("投函", 0))
+        takkyubin_count = int(type_counts.get("宅急便", 0))
         elapsed = max(0, int(time.monotonic() - getattr(self, "label_printing_started_at", time.monotonic())))
         output_dir = result.get("output_dir", "")
         self.label_output_dir_input.setText(output_dir)
         self.add_label_log("SUCCESS", f"面单打印文件已生成至: {output_dir}")
-        self.add_label_log("INFO", f"总页数: {total_pages}；匹配: {matched_pages}；可打印: {printed_pages}；排除: {excluded_pages}")
+        self.add_label_log(
+            "INFO",
+            f"总页数: {total_pages}；匹配: {matched_pages}；已打印: {printed_pages}；"
+            f"排除: {excluded_pages}；客户数: {customer_count}；"
+            f"投函: {toukan_count}；宅急便: {takkyubin_count}",
+        )
         for output_path in output_paths:
             self.add_label_log("INFO", f"生成文件: {Path(output_path).name}")
         self.data_manager.add_record({
@@ -2392,11 +2401,14 @@ class MainWindow(QMainWindow):
         self.refresh_dashboard()
         self.refresh_statistics()
         self.play_done_sound()
-        names = "\n".join(f"- {Path(path).name}" for path in output_paths) or "- 未生成可打印文件"
+        names = "\n".join(f"- {Path(path).name}" for path in output_paths)
+        if not names:
+            names = "- 没有可打印的 SKU×1 面单"
         show_info(
             self,
             "面单打印完成",
-            f"总页数：{total_pages}\n匹配页数：{matched_pages}\n可打印页数：{printed_pages}\n排除页数：{excluded_pages}"
+            f"总页数：{total_pages}\n匹配页数：{matched_pages}\n已打印页数：{printed_pages}\n排除页数：{excluded_pages}"
+            f"\n客户数：{customer_count}\n投函：{toukan_count}；宅急便：{takkyubin_count}"
             f"\n输出目录：{output_dir}\n\n生成文件：\n{names}",
         )
 

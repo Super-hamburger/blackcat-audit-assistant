@@ -1,8 +1,12 @@
 from dataclasses import dataclass
 from datetime import datetime
 import csv
+import os
 from pathlib import Path
 import re
+import subprocess
+import sys
+import unicodedata
 from uuid import uuid4
 
 import fitz
@@ -62,7 +66,8 @@ def normalize_digits(value):
 
 
 def normalize_text(value):
-    return re.sub(r"[\s\u3000\-－]", "", str(value or "")).casefold()
+    normalized = unicodedata.normalize("NFKC", str(value or ""))
+    return re.sub(r"[\s\-－]", "", normalized).casefold()
 
 
 def classify_sku(sku, quantity):
@@ -78,11 +83,25 @@ def detect_label_type(text):
 
 
 def extract_label_id(text):
-    match = re.search(r"a(\d{12})a", str(text or ""), re.IGNORECASE)
+    match = re.search(
+        r"a(\d{4}(?:[\-－]?\d{4}){2})a", str(text or ""), re.IGNORECASE
+    )
     if match:
-        return match.group(1)
-    match = re.search(r"(?<!\d)(\d{12})(?!\d)", str(text or ""))
-    return match.group(1) if match else ""
+        return normalize_digits(match.group(1))
+    match = re.search(
+        r"(?<!\d)(\d{4}(?:[\-－]?\d{4}){2})(?!\d)", str(text or "")
+    )
+    return normalize_digits(match.group(1)) if match else ""
+
+
+def open_directory(path):
+    target = str(path)
+    if sys.platform == "win32":
+        os.startfile(target)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", target])
+    else:
+        subprocess.Popen(["xdg-open", target])
 
 
 def page_sort_key(page):
@@ -245,6 +264,17 @@ class LabelPrintProcessor:
         return bool(postal and name and postal in normalize_digits(text) and name in normalized)
 
     @staticmethod
+    def _matches_recipient_address(text, order):
+        address = normalize_text(order.recipient_address)
+        return bool(address and address in normalize_text(text))
+
+    def _narrow_candidates_by_address(self, text, candidates):
+        address_matches = [
+            order for order in candidates if self._matches_recipient_address(text, order)
+        ]
+        return address_matches if len(address_matches) == 1 else candidates
+
+    @staticmethod
     def _match_error(page_order, candidates):
         references = ", ".join(order.reference for order in candidates) or "无"
         return LabelPrintingError(
@@ -260,6 +290,8 @@ class LabelPrintProcessor:
             candidates = [
                 order for order in values if self._matches_postal_and_name(text, order)
             ]
+            if len(candidates) > 1:
+                candidates = self._narrow_candidates_by_address(text, candidates)
         else:
             page_digits = normalize_digits(text)
             phone_candidates = [
@@ -273,10 +305,10 @@ class LabelPrintProcessor:
                     order for order in candidates
                     if self._matches_postal_and_name(text, order)
                 ]
-                candidates = (
-                    narrowed_candidates
-                    if len(narrowed_candidates) == 1 else phone_candidates
-                )
+                if narrowed_candidates:
+                    candidates = narrowed_candidates
+                if len(candidates) > 1:
+                    candidates = self._narrow_candidates_by_address(text, candidates)
 
         if len(candidates) != 1:
             raise self._match_error(page_order, candidates)
@@ -420,18 +452,31 @@ class LabelPrintProcessor:
                     len(groups),
                 )
 
-            report_progress(progress_callback, "completed", "面单打印文件生成完成", 1, 1)
+            printed_pages = sum(len(group_pages) for _, group_pages in groups)
             customer_page_counts = {}
+            type_counts = {"投函": 0, "宅急便": 0}
             for page in pages:
                 customer_id = page.order.customer_id
                 customer_page_counts[customer_id] = (
                     customer_page_counts.get(customer_id, 0) + 1
                 )
+                type_counts[page.label_type] += 1
+
+            if self.open_after:
+                try:
+                    open_directory(task_dir)
+                except OSError:
+                    pass
+
+            report_progress(progress_callback, "completed", "面单打印文件生成完成", 1, 1)
             return {
                 "output_dir": str(task_dir),
                 "output_paths": [str(path) for path in created_paths],
                 "total_pages": total_pages,
                 "matched_pages": len(pages),
+                "printed_pages": printed_pages,
+                "customer_count": len(customer_page_counts),
+                "type_counts": type_counts,
                 "customer_page_counts": customer_page_counts,
                 "excluded_pages": sum(
                     page.order.sku_kind != "SKU×1" for page in pages

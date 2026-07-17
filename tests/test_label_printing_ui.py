@@ -1,4 +1,6 @@
 import unittest
+import time
+from unittest.mock import MagicMock, patch
 
 from PySide6.QtWidgets import QApplication
 
@@ -58,6 +60,68 @@ class LabelPrintingUiTest(unittest.TestCase):
             self.assertFalse(window.label_split_types_combo.itemData(0))
             self.assertTrue(window.label_split_types_combo.itemData(1))
             self.assertIn("不选择时", window.label_output_dir_input.placeholderText())
+        finally:
+            window.close()
+            app.processEvents()
+
+    def test_completion_summary_shows_printed_pages_customer_count_and_type_counts(self):
+        app = self.application()
+        window = main_window.MainWindow()
+        try:
+            window.label_printing_started_at = time.monotonic()
+            window.add_label_log = MagicMock()
+            window.data_manager.add_record = MagicMock()
+            window.refresh_dashboard = MagicMock()
+            window.refresh_statistics = MagicMock()
+            window.play_done_sound = MagicMock()
+            result = {
+                "output_dir": "out",
+                "output_paths": ["out/全部客户_合并_货架排序.pdf"],
+                "total_pages": 4,
+                "matched_pages": 4,
+                "printed_pages": 2,
+                "excluded_pages": 2,
+                "customer_count": 2,
+                "type_counts": {"投函": 1, "宅急便": 3},
+            }
+
+            with patch("ui.main_window.show_info") as modal:
+                window.handle_label_printing_success(result)
+
+            message = modal.call_args.args[2]
+            self.assertIn("已打印页数：2", message)
+            self.assertIn("客户数：2", message)
+            self.assertIn("投函：1；宅急便：3", message)
+        finally:
+            window.close()
+            app.processEvents()
+
+    def test_zero_output_completion_message_names_missing_sku_one_labels(self):
+        app = self.application()
+        window = main_window.MainWindow()
+        try:
+            window.label_printing_started_at = time.monotonic()
+            window.add_label_log = MagicMock()
+            window.data_manager.add_record = MagicMock()
+            window.refresh_dashboard = MagicMock()
+            window.refresh_statistics = MagicMock()
+            window.play_done_sound = MagicMock()
+            result = {
+                "output_dir": "out",
+                "output_paths": [],
+                "total_pages": 2,
+                "matched_pages": 2,
+                "printed_pages": 0,
+                "excluded_pages": 2,
+                "customer_count": 1,
+                "type_counts": {"投函": 0, "宅急便": 2},
+            }
+
+            with patch("ui.main_window.show_info") as modal:
+                window.handle_label_printing_success(result)
+
+            message = modal.call_args.args[2]
+            self.assertIn("没有可打印的 SKU×1 面单", message)
         finally:
             window.close()
             app.processEvents()

@@ -2,10 +2,12 @@ import tempfile
 import unittest
 import csv
 from pathlib import Path
+from unittest.mock import patch
 
 import fitz
 from openpyxl import Workbook
 
+from modules.label_printing import processor as label_printing_processor
 from modules.label_printing.processor import LabelPrintProcessor, LabelPrintingError
 
 
@@ -171,6 +173,13 @@ class LabelPrintingProcessorTest(unittest.TestCase):
         self.assertEqual(result["excluded_pages"], 2)
         self.assertEqual(Path(result["output_paths"][0]).name, "全部客户_合并_货架排序.pdf")
 
+    def test_success_result_reports_written_pages_customers_and_matched_type_counts(self):
+        result = self.run_processor(scope="all", split_types=False)
+
+        self.assertEqual(result.get("printed_pages"), 2)
+        self.assertEqual(result.get("customer_count"), 2)
+        self.assertEqual(result.get("type_counts"), {"投函": 1, "宅急便": 3})
+
     def test_all_split_writes_toukan_before_takkyubin(self):
         result = self.run_processor(scope="all", split_types=True)
 
@@ -235,6 +244,55 @@ class LabelPrintingProcessorTest(unittest.TestCase):
         self.assertEqual(list(self.output_dir.glob("**/*.pdf")), [])
         self.assertTrue(any(self.output_dir.glob("**/异常报告.csv")))
 
+    def test_formatted_twelve_digit_label_id_is_detected_as_a_duplicate(self):
+        self.create_pdf(
+            self.pdf_paths[1],
+            ["TOUKAN 123-4567 Taro Yamada a1234-5678-9012a RACK-1"],
+        )
+
+        with self.assertRaisesRegex(LabelPrintingError, "重复面单"):
+            self.run_processor("all", False)
+
+        self.assertEqual(list(self.output_dir.glob("**/*.pdf")), [])
+
+    def test_open_after_opens_output_directory_only_after_successful_saves(self):
+        processor = LabelPrintProcessor(
+            self.source_path, self.finished_path, self.pdf_paths,
+            self.output_dir, "all", False, True,
+        )
+
+        with patch.object(label_printing_processor, "open_directory", create=True) as opener:
+            result = processor.run()
+
+        opener.assert_called_once_with(Path(result["output_dir"]))
+
+    def test_open_after_false_does_not_open_output_directory(self):
+        processor = LabelPrintProcessor(
+            self.source_path, self.finished_path, self.pdf_paths,
+            self.output_dir, "all", False, False,
+        )
+
+        with patch.object(label_printing_processor, "open_directory") as opener:
+            processor.run()
+
+        opener.assert_not_called()
+
+    def test_open_after_does_not_open_output_directory_when_validation_fails(self):
+        self.create_pdf(
+            self.pdf_paths[1],
+            ["TOUKAN 123-4567 Taro Yamada a123456789012a RACK-1"],
+        )
+        processor = LabelPrintProcessor(
+            self.source_path, self.finished_path, self.pdf_paths,
+            self.output_dir, "all", False, True,
+        )
+
+        with patch.object(label_printing_processor, "open_directory", create=True) as opener:
+            with self.assertRaisesRegex(LabelPrintingError, "重复面单"):
+                processor.run()
+
+        opener.assert_not_called()
+
     def test_finished_rows_map_to_source_customer_and_shelf(self):
         orders = self.processor.load_orders()
         self.assertEqual(orders["REF-ONE"].customer_id, "12027")
@@ -288,3 +346,58 @@ class LabelPrintingProcessorTest(unittest.TestCase):
             Exception, r"REF-ONE.*REF-TWO"
         ):
             self.processor.match_page("TEL 090-1234-5678", 0)
+
+    def test_phone_match_uses_normalized_address_to_resolve_duplicate_phone(self):
+        self.create_workbook(
+            self.source_path,
+            ["客户编号", "参考单号", "SKU", "数量", "货架"],
+            [
+                ["12027", "REF-ONE", "SKU-ONE", 1, "2-1"],
+                ["12028", "REF-TWO", "SKU-TWO", 1, "1-1"],
+            ],
+        )
+        self.create_workbook(
+            self.finished_path,
+            ["单号", "收件人电话", "收件邮编", "收件地址", "详细地址", "收件姓名"],
+            [
+                ["REF-ONE", "09012345678", "1000001", "Tokyo", "1-2-3", "Hanako Sato"],
+                ["REF-TWO", "09012345678", "1000001", "Osaka", "4-5-6", "Hanako Sato"],
+            ],
+        )
+
+        try:
+            page = self.processor.match_page("TEL 090-1234-5678 Tokyo 1－2－3", 0)
+        except LabelPrintingError:
+            page = None
+
+        self.assertEqual(page.order.reference if page else None, "REF-ONE")
+
+    def test_toukan_match_uses_primary_and_supplemental_address_to_resolve_duplicates(self):
+        self.create_workbook(
+            self.source_path,
+            ["客户编号", "参考单号", "SKU", "数量", "货架"],
+            [
+                ["12027", "REF-ONE", "SKU-ONE", 1, "2-1"],
+                ["12028", "REF-TWO", "SKU-TWO", 1, "1-1"],
+            ],
+        )
+        self.create_workbook(
+            self.finished_path,
+            [
+                "お客様管理番号(内部ID)", "お届け先電話番号", "お届け先郵便番号",
+                "お届け先住所", "お届け先住所（アパートマンション名）", "お届け先名",
+            ],
+            [
+                ["REF-ONE", "09012345678", "1234567", "東京都千代田区1-2-3", "メゾン101", "山田 太郎"],
+                ["REF-TWO", "08087654321", "1234567", "東京都千代田区9-8-7", "メゾン202", "山田 太郎"],
+            ],
+        )
+
+        try:
+            page = self.processor.match_page(
+                "TOUKAN 123-4567 山田太郎 東京都千代田区１－２－３ メゾン 101", 0
+            )
+        except LabelPrintingError:
+            page = None
+
+        self.assertEqual(page.order.reference if page else None, "REF-ONE")
