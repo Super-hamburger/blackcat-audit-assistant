@@ -18,6 +18,14 @@ class FakeSoundEngine:
         self.paths.append(path)
 
 
+class FakeText:
+    def __init__(self, value):
+        self.value = value
+
+    def setText(self, value):
+        self.value = value
+
+
 class ScanFeedbackTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -88,6 +96,27 @@ class ScanFeedbackTest(unittest.TestCase):
 
         self.assertEqual(window.scan_progress_bar.value(), 40)
         self.assertEqual(window.scan_percent_label.text(), "已匹配 2 / 5（40%）")
+
+    def test_blocked_scan_reset_restores_waiting_text_only_for_current_token(self):
+        window = MainWindow.__new__(MainWindow)
+        window._scan_status_visual_token = 7
+        window.scan_current_result = FakeText("SKU 不属于当前出库单")
+        visual_updates = []
+        window.set_scan_status_visual = lambda state, title, subtitle: visual_updates.append(
+            (state, title, subtitle)
+        )
+
+        MainWindow._reset_scan_status_visual_if_current(window, 7)
+
+        self.assertEqual(window.scan_current_result.value, "等待扫码")
+        self.assertEqual(visual_updates, [("ready", "放行中", "一扫正确，可以继续扫描")])
+
+        window._scan_status_visual_token = 8
+        window.scan_current_result.setText("新的扫码结果")
+        MainWindow._reset_scan_status_visual_if_current(window, 7)
+
+        self.assertEqual(window.scan_current_result.value, "新的扫码结果")
+        self.assertEqual(visual_updates, [("ready", "放行中", "一扫正确，可以继续扫描")])
 
     def test_scan_input_prefers_lowercase_latin_input(self):
         input_widget = QLineEdit()

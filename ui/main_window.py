@@ -1180,6 +1180,7 @@ class MainWindow(QMainWindow):
 
     def _reset_scan_status_visual_if_current(self, status_token):
         if getattr(self, "_scan_status_visual_token", None) == status_token:
+            self.scan_current_result.setText("等待扫码")
             self.set_scan_status_visual("ready", "放行中", "一扫正确，可以继续扫描")
 
     def export_scan_unmatched_source_rows(self):

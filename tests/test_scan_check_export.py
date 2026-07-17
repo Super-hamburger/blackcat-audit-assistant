@@ -27,13 +27,37 @@ class ScanCheckExceptionExportTest(unittest.TestCase):
         service.start()
         service.scan("SO-100")
         service.scan("SKU-01")
+        logs_before_block = list(service.summary()["recent_logs"])
         blocked = service.scan("UNKNOWN-SKU")
 
         self.assertEqual(blocked["result"], "block")
         self.assertFalse(hasattr(service, "exception_logs"))
-        self.assertEqual(service.summary()["matched_count"], 1)
-        self.assertEqual(service.summary()["matchable_count"], 2)
-        self.assertEqual(service.summary()["progress_percent"], 50)
+        summary = service.summary()
+        self.assertEqual(summary["recent_logs"], logs_before_block)
+        self.assertEqual(summary["total_scans"], 2)
+        self.assertEqual(summary["failed"], 1)
+        self.assertEqual(summary["matched_count"], 1)
+        self.assertEqual(summary["matchable_count"], 2)
+        self.assertEqual(summary["progress_percent"], 50)
+
+    def test_rescanning_a_completed_known_sku_keeps_its_product_name(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "source.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["出库单号", "SKU", "数量", "商品名称"])
+            sheet.append(["SO-100", "SKU-01", 1, "测试商品"])
+            workbook.save(source_path)
+
+            service = ScanCheckService()
+            service.load_excel(source_path)
+            service.start()
+            service.scan("SO-100")
+            service.scan("SKU-01")
+            blocked = service.scan("SKU-01")
+
+            self.assertEqual(blocked["result"], "block")
+            self.assertEqual(blocked["product_name"], "测试商品")
 
     def test_export_unmatched_source_rows_ignores_quantity_two_rows(self):
         with tempfile.TemporaryDirectory() as temp_dir:

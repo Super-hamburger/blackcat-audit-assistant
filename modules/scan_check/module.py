@@ -203,11 +203,15 @@ class ScanCheckService:
             return self._fail(order["order_number"], shown_code, "SKU 不属于当前出库单")
 
         if item.scanned >= item.quantity:
-            return self._fail(order["order_number"], item.sku, "该 SKU 已扫够数量")
+            return self._fail(
+                order["order_number"], item.sku, "该 SKU 已扫够数量", product_name=item.product_name
+            )
 
         pending_indexes = self.pending_row_indexes_by_key.get((self.current_order, code))
         if not pending_indexes:
-            return self._fail(order["order_number"], item.sku, "该 SKU 已扫够数量")
+            return self._fail(
+                order["order_number"], item.sku, "该 SKU 已扫够数量", product_name=item.product_name
+            )
 
         item.scanned += 1
         self.matched_row_indexes.add(pending_indexes.popleft())
@@ -363,16 +367,15 @@ class ScanCheckService:
             "items": [item.__dict__ | {"status": item.status} for item in self.current_items()],
         }
 
-    def _fail(self, order_number, sku, reason, count_scan=True):
+    def _fail(self, order_number, sku, reason, count_scan=True, product_name=""):
         if count_scan:
             self.total_scans += 1
             self.failed += 1
-            self._append_log(order_number, sku, "异常拦截")
         result = self._state("blocked", reason)
         result["result"] = "block"
         result["order_number"] = order_number or result.get("order_number", "")
         result["sku"] = sku
-        result["product_name"] = ""
+        result["product_name"] = product_name
         result["message"] = reason
         return result
 
