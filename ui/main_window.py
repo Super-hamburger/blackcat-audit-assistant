@@ -859,7 +859,6 @@ class MainWindow(QMainWindow):
         metric_row.addWidget(self.scan_metric_pass_card)
         metric_row.addWidget(self.scan_metric_fail_card)
         metric_row.addWidget(self.scan_metric_rate_card)
-        self.scan_progress_card.layout().addLayout(metric_row)
         left_panel.addWidget(self.scan_progress_card)
 
         current_card = self.create_card("当前验单信息")
@@ -875,6 +874,7 @@ class MainWindow(QMainWindow):
         order_col = QVBoxLayout()
         order_label = QLabel("出库单号")
         order_label.setObjectName("ScanFieldLabel")
+        self.scan_order_label = order_label
         self.scan_current_order = QLabel("未选择")
         self.scan_current_order.setObjectName("ScanOrderHeroValue")
         self.scan_current_order.setWordWrap(True)
@@ -888,6 +888,7 @@ class MainWindow(QMainWindow):
         sku_col = QVBoxLayout()
         sku_label = QLabel("SKU")
         sku_label.setObjectName("ScanFieldLabel")
+        self.scan_sku_label = sku_label
         self.scan_current_sku = QLabel("等待输入")
         self.scan_current_sku.setObjectName("ScanFieldValue")
         self.scan_product_name = QLabel("商品名称：--")
@@ -924,6 +925,10 @@ class MainWindow(QMainWindow):
         current_card.layout().addLayout(preview_row)
         self.set_scan_order_hero_style("ready")
         left_panel.addWidget(current_card)
+
+        scan_metrics_card = self.create_card("本机扫码概况")
+        scan_metrics_card.layout().addLayout(metric_row)
+        left_panel.addWidget(scan_metrics_card)
 
         detail_card = self.create_card("出库单明细")
         detail_tip = QLabel("当前单据明细，扫码后逐行更新本机已扫数量。")
@@ -1173,6 +1178,22 @@ class MainWindow(QMainWindow):
             self.scan_current_order.setStyleSheet(
                 f"color: {order_colors.get(state, order_colors['ready'])};"
             )
+        if state == "ready":
+            for name in ("scan_order_label", "scan_sku_label"):
+                if hasattr(self, name):
+                    getattr(self, name).setStyleSheet("color: #CBD5E1;")
+            for name in ("scan_order_time", "scan_product_name", "scan_success_time"):
+                if hasattr(self, name):
+                    getattr(self, name).setStyleSheet("color: #E2E8F0;")
+            if hasattr(self, "scan_current_sku"):
+                self.scan_current_sku.setStyleSheet("color: #C4B5FD;")
+        else:
+            for name in (
+                "scan_order_label", "scan_sku_label", "scan_order_time",
+                "scan_product_name", "scan_success_time", "scan_current_sku",
+            ):
+                if hasattr(self, name):
+                    getattr(self, name).setStyleSheet("")
 
     def set_scan_status_visual(self, state, title, subtitle):
         if hasattr(self, "scan_order_hero_frame"):
@@ -1211,7 +1232,8 @@ class MainWindow(QMainWindow):
             self.scan_gate_icon.setStyleSheet("color: #059669; font-size: 24px; font-weight: 900;")
             self.scan_gate_status.setStyleSheet("color: #059669;")
             self.scan_gate_sub.setStyleSheet("color: #64748B;")
-            self.scan_current_result.setStyleSheet("color: #059669; font-weight: 900;")
+            result_color = "#A7F3D0" if state == "ready" else "#059669"
+            self.scan_current_result.setStyleSheet(f"color: {result_color}; font-weight: 900;")
 
     def _reset_scan_status_visual_if_current(self, status_token):
         if getattr(self, "_scan_status_visual_token", None) == status_token:

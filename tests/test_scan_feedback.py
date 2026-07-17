@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QCheckBox, QFrame, QLabel, QLineEdit, QProgressBar
+from PySide6.QtWidgets import QApplication, QCheckBox, QFrame, QLabel, QLineEdit, QProgressBar, QScrollArea
 
 from ui.main_window import MainWindow, ScanInputController
 
@@ -84,7 +84,38 @@ class ScanFeedbackTest(unittest.TestCase):
         window.scan_current_result = QLabel()
         window.scan_order_hero_frame = QFrame()
         window.scan_current_order = QLabel()
+        window.scan_order_time = QLabel()
+        window.scan_current_sku = QLabel()
+        window.scan_product_name = QLabel()
+        window.scan_success_time = QLabel()
         return window
+
+    def test_scan_workbench_keeps_current_result_in_viewport_at_minimum_size(self):
+        window = MainWindow()
+        try:
+            window.resize(1160, 760)
+            window.set_page(3)
+            window.show()
+            self.application.processEvents()
+
+            viewport = next(
+                area.viewport()
+                for area in window.findChildren(QScrollArea)
+                if area.isVisible()
+            )
+            viewport_top = viewport.mapTo(window, viewport.rect().topLeft()).y()
+            viewport_bottom = viewport.mapTo(window, viewport.rect().bottomLeft()).y()
+            order_top = window.scan_current_order.mapTo(
+                window, window.scan_current_order.rect().topLeft()
+            ).y()
+            result_bottom = window.scan_current_result.mapTo(
+                window, window.scan_current_result.rect().bottomLeft()
+            ).y()
+
+            self.assertGreaterEqual(order_top, viewport_top)
+            self.assertLessEqual(result_bottom, viewport_bottom)
+        finally:
+            window.close()
 
     def test_blocked_scan_does_not_open_a_modal_warning_and_refocuses_input(self):
         window = self.window_with_blocked_scan_result()
@@ -124,6 +155,16 @@ class ScanFeedbackTest(unittest.TestCase):
         MainWindow.set_scan_status_visual(window, "block", "已拦截", "SKU 不属于当前出库单")
 
         self.assertIn("#FEF2F2", window.scan_order_hero_frame.styleSheet())
+
+    def test_ready_order_hero_uses_light_secondary_text_on_dark_background(self):
+        window = self.status_window()
+
+        MainWindow.set_scan_order_hero_style(window, "ready")
+
+        self.assertIn("#E2E8F0", window.scan_order_time.styleSheet())
+        self.assertIn("#E2E8F0", window.scan_product_name.styleSheet())
+        self.assertIn("#E2E8F0", window.scan_success_time.styleSheet())
+        self.assertIn("#C4B5FD", window.scan_current_sku.styleSheet())
 
     def test_blocked_scan_reset_restores_waiting_text_only_for_current_token(self):
         window = MainWindow.__new__(MainWindow)
