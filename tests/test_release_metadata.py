@@ -31,6 +31,7 @@ class ReleaseMetadataTests(unittest.TestCase):
         file_paste_module = load_json("modules/file_paste/module.json")
         label_printing_module = load_json("modules/label_printing/module.json")
         package_path = PROJECT_ROOT / "release/BlackCatAuditAssistant_Setup_4.4.4.zip"
+        release_notes_path = PROJECT_ROOT / "docs/RELEASE_4.4.4.md"
 
         self.assertEqual("4.4.4", APP_VERSION)
         self.assertEqual("4.4.4", version["version"])
@@ -44,6 +45,15 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertEqual(64, len(manifest["package_sha256"]))
         self.assertIsNotNone(re.fullmatch(r"[0-9a-f]{64}", manifest["package_sha256"]))
         self.assertEqual(sha256_file(package_path), manifest["package_sha256"])
+        release_notes = release_notes_path.read_text(encoding="utf-8")
+        release_notes_hash = re.search(r"SHA256：`([0-9a-f]{64})`", release_notes)
+        self.assertIsNotNone(release_notes_hash)
+        self.assertEqual(manifest["package_sha256"], release_notes_hash.group(1))
+        self.assertEqual(sha256_file(package_path), release_notes_hash.group(1))
+        self.assertIn(
+            "本地 4.4.4 发布包已生成、尚未上传 GitHub，远程自动更新尚不可用",
+            release_notes,
+        )
         self.assertEqual("4.4.4", file_paste_module["version"])
         self.assertEqual("4.4.4", label_printing_module["version"])
         self.assertEqual("V4.4.4", changelog[0]["version"])
