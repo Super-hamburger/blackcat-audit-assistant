@@ -13,6 +13,6 @@
 
 下载地址：`https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.4.4/BlackCatAuditAssistant_Setup_4.4.4.zip`
 
-SHA256：`89e2ae976c98618ff620f7a9cb075376a0217e44cca013e7fefb60d77a6d1c0f`
+SHA256：`f7e969ef399c2cc7e196c6852411f3792ed616d2bee05cf87acd966aefa4ccd2`
 
-该校验和与 `updater/update_manifest.example.json` 的 `package_sha256` 一致。正式版 4.4.4 已正式发布，可通过应用的自动更新功能获取。
+该校验和与 `updater/update_manifest.example.json` 的 `package_sha256` 一致。正式版 4.4.4 已正式发布；远程清单在线时可自动更新。
