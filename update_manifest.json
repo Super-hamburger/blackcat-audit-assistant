@@ -1,13 +1,13 @@
 {
   "latest_version": "4.4.4",
-  "message": "正式版 4.4.4 已正式发布，可通过应用的自动更新功能获取。",
+  "message": "正式版 4.4.4 已正式发布；远程清单在线时可自动更新。",
   "manifest_url": "https://super-hamburger.github.io/blackcat-audit-assistant/update_manifest.json",
   "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.4.4/BlackCatAuditAssistant_Setup_4.4.4.zip",
-  "package_sha256": "89e2ae976c98618ff620f7a9cb075376a0217e44cca013e7fefb60d77a6d1c0f",
+  "package_sha256": "f7e969ef399c2cc7e196c6852411f3792ed616d2bee05cf87acd966aefa4ccd2",
   "mandatory": false,
   "published_at": "2026-07-18T03:31:48+08:00",
   "release_notes": [
-    "正式版 4.4.4 已正式发布，可通过应用的自动更新功能获取。",
+    "正式版 4.4.4 已正式发布；远程清单在线时可自动更新。",
     "文件粘贴按 Windows 安全文件名输出 SKU×1、SKU×N和多SKU、完整成品表三类文件。",
     "面单打印支持按客户分开或全部客户一次打印，并可分别处理投函和宅急便。",
     "扫码验单使用非模态异常视觉反馈，并将整体进度和当前出库单状态集中到扫码工作台。"
