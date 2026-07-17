@@ -98,9 +98,13 @@ def run_self_test(output_path=None):
         registry = ModuleRegistry()
         modules = registry.discover()
         module_ids = [module.module_id for module in modules]
-        record("discover business modules", {"file_paste", "label_compress"}.issubset(module_ids), module_ids)
+        record(
+            "discover business modules",
+            {"file_paste", "label_compress", "label_printing"}.issubset(module_ids),
+            module_ids,
+        )
 
-        for module_id in ["file_paste", "label_compress"]:
+        for module_id in ["file_paste", "label_compress", "label_printing"]:
             try:
                 result = registry.run(module_id, {})
                 record(f"execute {module_id} entry", result is not None, getattr(result, "message", ""))
@@ -142,6 +146,60 @@ def run_self_test(output_path=None):
                     and excel_data.get("quantity_issue_count") == 0
                     and excel_output.exists(),
                     excel_result.message,
+                )
+
+                label_source_path = temp_dir / "label_source.xlsx"
+                label_finished_path = temp_dir / "label_finished.xlsx"
+                label_output_dir = temp_dir / "label_output"
+
+                wb = Workbook()
+                ws = wb.active
+                ws.append(["客户编号", "参考单号", "SKU", "数量", "货架"])
+                ws.append(["12027", "LABELSELFTEST001", "SKU001", 1, "1-1"])
+                wb.save(label_source_path)
+                wb.close()
+
+                wb = Workbook()
+                ws = wb.active
+                ws.append([
+                    "单号", "收件人电话", "收件邮编", "收件地址", "详细地址", "收件姓名",
+                ])
+                ws.append([
+                    "LABELSELFTEST001", "09012345678", "1000001", "Tokyo", "1-2-3", "Self Test",
+                ])
+                wb.save(label_finished_path)
+                wb.close()
+
+                label_pdf_path = temp_dir / "label_printing_sample.pdf"
+                doc = fitz.open()
+                page = doc.new_page()
+                page.insert_text((72, 72), "TEL 090-1234-5678 a123456789012a")
+                doc.save(label_pdf_path)
+                doc.close()
+
+                label_result = registry.run("label_printing", {
+                    "source_path": str(label_source_path),
+                    "finished_path": str(label_finished_path),
+                    "pdf_paths": [str(label_pdf_path)],
+                    "output_dir": str(label_output_dir),
+                    "open_after": False,
+                })
+                label_data = label_result.data or {}
+                label_outputs = [Path(path) for path in label_data.get("output_paths", [])]
+                label_page_count = 0
+                if len(label_outputs) == 1 and label_outputs[0].exists():
+                    output_doc = fitz.open(label_outputs[0])
+                    try:
+                        label_page_count = output_doc.page_count
+                    finally:
+                        output_doc.close()
+                record(
+                    "run label_printing sample pdf",
+                    label_result.ok
+                    and len(label_outputs) == 1
+                    and label_outputs[0].name == "全部客户_合并_货架排序.pdf"
+                    and label_page_count == 1,
+                    label_result.message,
                 )
 
                 pdf_path = temp_dir / "sample_label.pdf"

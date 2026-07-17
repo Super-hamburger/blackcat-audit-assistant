@@ -1,8 +1,22 @@
 import unittest
 from pathlib import Path
 
+from core.modules.module_registry import ModuleRegistry
+
 
 class PortableBuildConfigurationTest(unittest.TestCase):
+    def test_registry_discovers_label_printing(self):
+        module_ids = [item.module_id for item in ModuleRegistry().discover()]
+
+        self.assertIn("label_printing", module_ids)
+
+    def test_label_printing_module_requires_all_input_categories(self):
+        result = ModuleRegistry().run("label_printing", {})
+
+        self.assertFalse(result.ok)
+        for key in ("source_path", "finished_path", "pdf_paths", "output_dir"):
+            self.assertIn(key, result.message)
+
     def test_portable_build_uses_resource_collecting_specification(self):
         root = Path(__file__).resolve().parents[1]
         script = (root / "installer" / "build_portable.bat").read_text(encoding="utf-8")
