@@ -97,6 +97,27 @@ class ExcelConversionWorker(QObject):
             self.failed.emit(str(error))
 
 
+class LabelPrintingWorker(QObject):
+    progress = Signal(object)
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, module_registry, context):
+        super().__init__()
+        self.module_registry = module_registry
+        self.context = context
+
+    def run(self):
+        try:
+            context = {**self.context, "progress_callback": self.progress.emit}
+            module_result = self.module_registry.run("label_printing", context)
+            if not module_result.ok or not module_result.data:
+                raise RuntimeError(module_result.message)
+            self.finished.emit(module_result.data)
+        except Exception as error:
+            self.failed.emit(str(error))
+
+
 class ExcelProgressDialog(QDialog):
     """Keeps the task controls visible when the user presses Escape."""
 
@@ -207,6 +228,8 @@ class MainWindow(QMainWindow):
         self.update_check_worker = None
         self.excel_conversion_thread = None
         self.excel_conversion_worker = None
+        self.label_printing_thread = None
+        self.label_printing_worker = None
         self.excel_progress_dialog = None
         self.excel_progress_bar = None
         self.excel_progress_status = None
@@ -389,20 +412,21 @@ class MainWindow(QMainWindow):
         self.add_nav_button(side, "🏠  主页", 0)
         self.add_nav_button(side, "📋  文件粘贴", 1)
         self.add_nav_button(side, "📦  面单压缩", 2)
-        self.add_nav_button(side, "🔍  扫码验单", 3)
+        self.add_nav_button(side, "🖨  面单打印", 3)
+        self.add_nav_button(side, "🔍  扫码验单", 4)
 
         self.add_separator(side)
 
-        self.add_nav_button(side, "📑  处理记录", 4)
-        self.add_nav_button(side, "📊  数据统计", 5)
-        self.add_nav_button(side, "⭐  收藏模板", 6)
+        self.add_nav_button(side, "📑  处理记录", 5)
+        self.add_nav_button(side, "📊  数据统计", 6)
+        self.add_nav_button(side, "⭐  收藏模板", 7)
 
         self.add_separator(side)
 
-        self.add_nav_button(side, "⚙  设置", 7)
-        self.add_nav_button(side, "📖  帮助文档", 8)
-        self.add_nav_button(side, "🆕  更新日志", 9)
-        self.add_nav_button(side, "ℹ  关于我们", 10)
+        self.add_nav_button(side, "⚙  设置", 8)
+        self.add_nav_button(side, "📖  帮助文档", 9)
+        self.add_nav_button(side, "🆕  更新日志", 10)
+        self.add_nav_button(side, "ℹ  关于我们", 11)
 
         side.addStretch()
 
@@ -431,7 +455,7 @@ class MainWindow(QMainWindow):
         self.theme_button = self.small_button("🌙  主题")
         self.theme_button.clicked.connect(self.show_theme_center)
         self.settings_button = self.small_button("⚙  设置")
-        self.settings_button.clicked.connect(lambda: self.set_page(7))
+        self.settings_button.clicked.connect(lambda: self.set_page(8))
         header.addWidget(self.theme_button)
         header.addWidget(self.settings_button)
         main.addLayout(header)
@@ -442,6 +466,7 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.build_home_page())
         self.stack.addWidget(self.build_excel_page())
         self.stack.addWidget(self.build_pdf_page())
+        self.stack.addWidget(self.build_label_printing_page())
         self.stack.addWidget(self.build_scan_check_page())
         self.stack.addWidget(self.build_history_page())
         self.stack.addWidget(self.build_statistics_page())
@@ -472,6 +497,7 @@ class MainWindow(QMainWindow):
             ("主页", "欢迎回来，选择左侧功能开始工作。"),
             ("文件粘贴", "支持一件代发 Excel 和黑猫新版 Excel，自动生成黑猫上传表。"),
             ("面单压缩", "支持多 PDF 批量选择，自动识别单号、拆分、重命名、分组压缩。"),
+            ("面单打印", "按客户、面单类型和货架顺序生成可直接打印的 PDF。"),
             ("扫码验单", "本机扫码核对出库单号和 SKU，异常立即拦截。"),
             ("处理记录", "查看历史任务、输出目录、错误报告和重新打开任务。"),
             ("数据统计", "查看今日、本周、本月处理数量和效率。"),
@@ -485,11 +511,11 @@ class MainWindow(QMainWindow):
 
         if index == 0 and hasattr(self, "home_recent_table"):
             self.refresh_dashboard()
-        elif index == 4 and hasattr(self, "history_table"):
+        elif index == 5 and hasattr(self, "history_table"):
             self.refresh_history()
-        elif index == 5 and hasattr(self, "stats_detail_text"):
+        elif index == 6 and hasattr(self, "stats_detail_text"):
             self.refresh_statistics()
-        elif index == 6 and hasattr(self, "templates_table"):
+        elif index == 7 and hasattr(self, "templates_table"):
             self.refresh_templates()
 
         for i, button in enumerate(self.nav_buttons):
@@ -514,12 +540,15 @@ class MainWindow(QMainWindow):
         pdf_btn = QPushButton("📦  面单压缩")
         pdf_btn.setObjectName("PrimaryButton")
         pdf_btn.clicked.connect(lambda: self.set_page(2))
+        label_btn = QPushButton("🖨  面单打印")
+        label_btn.clicked.connect(lambda: self.set_page(3))
         scan_btn = QPushButton("🔍  扫码验单")
-        scan_btn.clicked.connect(lambda: self.set_page(3))
+        scan_btn.clicked.connect(lambda: self.set_page(4))
         history_btn = QPushButton("📑  处理记录")
-        history_btn.clicked.connect(lambda: self.set_page(4))
+        history_btn.clicked.connect(lambda: self.set_page(5))
         quick.addWidget(excel_btn)
         quick.addWidget(pdf_btn)
+        quick.addWidget(label_btn)
         quick.addWidget(scan_btn)
         quick.addWidget(history_btn)
         welcome.layout().addLayout(quick)
@@ -760,6 +789,121 @@ class MainWindow(QMainWindow):
         main.addWidget(log_card)
 
         return page
+
+    def build_label_printing_page(self):
+        page = self.create_scroll_page()
+        layout = page.layout()
+
+        intro = self.create_card("🖨 面单打印工作台")
+        description = QLabel(
+            "选择原始一件代发表、完整成品表和一个或多个黑猫面单 PDF，"
+            "按货架顺序生成打印文件；原始 PDF 不会被修改。"
+        )
+        description.setObjectName("BodyText")
+        description.setWordWrap(True)
+        intro.layout().addWidget(description)
+        layout.addWidget(intro)
+
+        workspace = QHBoxLayout()
+        workspace.setSpacing(14)
+        layout.addLayout(workspace)
+
+        config_card = self.create_card("1. 文件与打印范围")
+        self._add_label_printing_file_row(
+            config_card, "原始一件代发表", "请选择原始一件代发 Excel（.xlsx）",
+            "label_source_input", self.select_label_source,
+        )
+        self._add_label_printing_file_row(
+            config_card, "完整成品表", "请选择完整成品 Excel（.xlsx）",
+            "label_finished_input", self.select_label_finished,
+        )
+        self._add_label_printing_file_row(
+            config_card, "黑猫面单 PDF", "可选择一个或多个面单 PDF",
+            "label_pdf_input", self.select_label_pdfs,
+        )
+
+        config_card.layout().addLayout(self.section_label("输出目录（可选）"))
+        output_row = QHBoxLayout()
+        self.label_output_dir_input = QLineEdit()
+        self.label_output_dir_input.setPlaceholderText("不选择时默认保存到 LabelPrinting 输出目录")
+        output_button = QPushButton("📁  选择目录")
+        output_button.setObjectName("ToolButton")
+        output_button.clicked.connect(self.select_label_output_dir)
+        self.label_output_dir_button = output_button
+        output_row.addWidget(self.label_output_dir_input, 1)
+        output_row.addWidget(output_button)
+        config_card.layout().addLayout(output_row)
+
+        config_card.layout().addLayout(self.section_label("打印规则"))
+        rules = QGridLayout()
+        rules.setHorizontalSpacing(12)
+        rules.setVerticalSpacing(10)
+        rules.addWidget(QLabel("打印范围："), 0, 0)
+        self.label_scope_combo = QComboBox()
+        self.label_scope_combo.addItem("全部客户一次打印", "all")
+        self.label_scope_combo.addItem("按客户逐个打印", "by_customer")
+        rules.addWidget(self.label_scope_combo, 0, 1)
+        rules.addWidget(QLabel("面单类型："), 1, 0)
+        self.label_split_types_combo = QComboBox()
+        self.label_split_types_combo.addItem("合并宅急便和投函", False)
+        self.label_split_types_combo.addItem("分开投函和宅急便", True)
+        rules.addWidget(self.label_split_types_combo, 1, 1)
+        self.label_open_after_checkbox = QCheckBox("完成后打开输出目录")
+        self.label_open_after_checkbox.setChecked(True)
+        rules.addWidget(self.label_open_after_checkbox, 2, 0, 1, 2)
+        config_card.layout().addLayout(rules)
+
+        self.label_start_button = QPushButton("▶  生成打印文件")
+        self.label_start_button.setObjectName("PrimaryButton")
+        self.label_start_button.clicked.connect(self.start_label_printing)
+        config_card.layout().addWidget(self.label_start_button)
+        self.label_printing_controls = [
+            self.label_source_input, self.label_source_input_button,
+            self.label_finished_input, self.label_finished_input_button,
+            self.label_pdf_input, self.label_pdf_input_button,
+            self.label_output_dir_input, self.label_output_dir_button,
+            self.label_scope_combo, self.label_split_types_combo,
+            self.label_open_after_checkbox, self.label_start_button,
+        ]
+        workspace.addWidget(config_card, 3)
+
+        progress_card = self.create_card("2. 运行进度")
+        self.label_progress_status = QLabel("等待选择文件。")
+        self.label_progress_status.setObjectName("BodyText")
+        self.label_progress_status.setWordWrap(True)
+        progress_card.layout().addWidget(self.label_progress_status)
+        self.label_progress_bar = QProgressBar()
+        self.label_progress_bar.setValue(0)
+        progress_card.layout().addWidget(self.label_progress_bar)
+        progress_card.layout().addStretch()
+        workspace.addWidget(progress_card, 2)
+
+        log_card = self.create_card("3. 面单打印日志")
+        self.label_log_text = QTextEdit()
+        self.label_log_text.setObjectName("LogText")
+        self.label_log_text.setReadOnly(True)
+        self.label_log_text.setMinimumHeight(220)
+        log_card.layout().addWidget(self.label_log_text)
+        layout.addWidget(log_card)
+
+        layout.addStretch()
+        return page
+
+    def _add_label_printing_file_row(
+        self, card, title, placeholder, input_name, callback,
+    ):
+        card.layout().addLayout(self.section_label(title))
+        row = QHBoxLayout()
+        input_widget = QLineEdit()
+        input_widget.setPlaceholderText(placeholder)
+        setattr(self, input_name, input_widget)
+        button = QPushButton("📁  选择文件")
+        button.setObjectName("ToolButton")
+        button.clicked.connect(callback)
+        setattr(self, f"{input_name}_button", button)
+        row.addWidget(input_widget, 1)
+        row.addWidget(button)
+        card.layout().addLayout(row)
 
     def build_scan_check_page(self):
         page = self.create_scroll_page()
@@ -2087,6 +2231,184 @@ class MainWindow(QMainWindow):
         self.task_manager.done.connect(self.on_done)
         self.task_manager.error.connect(self.on_error)
 
+    def select_label_source(self):
+        self.play_click_sound()
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择原始一件代发表", "", "Excel Files (*.xlsx *.xlsm)"
+        )
+        if path:
+            self.label_source_input.setText(path)
+            self.add_label_log("INFO", f"已选择原始一件代发表: {path}")
+
+    def select_label_finished(self):
+        self.play_click_sound()
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择完整成品表", "", "Excel Files (*.xlsx *.xlsm)"
+        )
+        if path:
+            self.label_finished_input.setText(path)
+            self.add_label_log("INFO", f"已选择完整成品表: {path}")
+
+    def select_label_pdfs(self):
+        self.play_click_sound()
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "选择一个或多个面单 PDF", "", "PDF Files (*.pdf)"
+        )
+        if paths:
+            self.label_pdf_input.setText("|".join(paths))
+            self.add_label_log("INFO", f"已选择面单 PDF: {len(paths)} 个")
+
+    def select_label_output_dir(self):
+        self.play_click_sound()
+        path = QFileDialog.getExistingDirectory(self, "选择面单打印输出目录")
+        if path:
+            self.label_output_dir_input.setText(path)
+            self.add_label_log("INFO", f"已选择输出目录: {path}")
+
+    def get_label_printing_context(self):
+        source_path = self.label_source_input.text().strip()
+        finished_path = self.label_finished_input.text().strip()
+        pdf_paths = [path for path in self.label_pdf_input.text().split("|") if path]
+        missing = []
+        for name, path in (("原始一件代发表", source_path), ("完整成品表", finished_path)):
+            if not path:
+                missing.append(name)
+            elif not Path(path).is_file():
+                show_warning(self, "面单打印", f"{name}不存在或不是文件：\n{path}")
+                self.play_error_sound()
+                return None
+        if missing:
+            show_warning(self, "面单打印", "请先选择：" + "、".join(missing))
+            self.play_error_sound()
+            return None
+        if not pdf_paths:
+            show_warning(self, "面单打印", "请至少选择一个黑猫面单 PDF。")
+            self.play_error_sound()
+            return None
+        invalid_pdfs = [path for path in pdf_paths if not Path(path).is_file()]
+        if invalid_pdfs:
+            show_warning(self, "面单打印", "以下面单 PDF 不存在或不是文件：\n" + "\n".join(invalid_pdfs[:5]))
+            self.play_error_sound()
+            return None
+
+        output_text = self.label_output_dir_input.text().strip()
+        output_dir = Path(output_text) if output_text else PathManager.output_dir() / "LabelPrinting"
+        if output_text and not output_dir.is_dir():
+            show_warning(self, "面单打印", f"输出目录不存在或不可用：\n{output_dir}")
+            self.play_error_sound()
+            return None
+        return {
+            "source_path": source_path,
+            "finished_path": finished_path,
+            "pdf_paths": pdf_paths,
+            "output_dir": str(output_dir),
+            "scope": self.label_scope_combo.currentData(),
+            "split_types": bool(self.label_split_types_combo.currentData()),
+            "open_after": self.label_open_after_checkbox.isChecked(),
+        }
+
+    def start_label_printing(self):
+        if self.label_printing_thread and self.label_printing_thread.isRunning():
+            return
+        self.play_click_sound()
+        context = self.get_label_printing_context()
+        if not context:
+            return
+
+        self.label_printing_started_at = time.monotonic()
+        self.label_progress_bar.setRange(0, 0)
+        self.label_progress_status.setText("正在准备面单打印任务...")
+        self.add_label_log("INFO", "开始面单打印任务")
+        self.set_label_printing_controls_enabled(False)
+
+        self.label_printing_thread = QThread(self)
+        self.label_printing_worker = LabelPrintingWorker(self.module_registry, context)
+        self.label_printing_worker.moveToThread(self.label_printing_thread)
+        self.label_printing_thread.started.connect(self.label_printing_worker.run)
+        self.label_printing_worker.progress.connect(self.on_label_printing_progress)
+        self.label_printing_worker.finished.connect(self.on_label_printing_finished)
+        self.label_printing_worker.failed.connect(self.on_label_printing_failed)
+        self.label_printing_worker.finished.connect(self.label_printing_thread.quit)
+        self.label_printing_worker.failed.connect(self.label_printing_thread.quit)
+        self.label_printing_thread.finished.connect(self.label_printing_worker.deleteLater)
+        self.label_printing_thread.finished.connect(self.clear_label_printing_worker)
+        self.label_printing_thread.finished.connect(self.label_printing_thread.deleteLater)
+        self.label_printing_thread.start()
+
+    def set_label_printing_controls_enabled(self, enabled):
+        for control in self.label_printing_controls:
+            control.setEnabled(enabled)
+
+    def on_label_printing_progress(self, event):
+        event = event or {}
+        if event.get("indeterminate"):
+            self.label_progress_bar.setRange(0, 0)
+        else:
+            total = max(1, int(event.get("total") or 0))
+            current = max(0, min(total, int(event.get("current") or 0)))
+            self.label_progress_bar.setRange(0, total)
+            self.label_progress_bar.setValue(current)
+        message = event.get("message") or "正在生成面单打印文件..."
+        self.label_progress_status.setText(message)
+        self.add_label_log("INFO", message)
+
+    def on_label_printing_finished(self, result):
+        self.label_progress_bar.setRange(0, 100)
+        self.label_progress_bar.setValue(100)
+        self.label_progress_status.setText("面单打印完成。")
+        self.set_label_printing_controls_enabled(True)
+        self.handle_label_printing_success(result)
+
+    def on_label_printing_failed(self, error):
+        self.label_progress_status.setText("面单打印失败。")
+        self.set_label_printing_controls_enabled(True)
+        self.add_label_log("ERROR", f"面单打印失败: {error}")
+        self.play_error_sound()
+        show_warning(self, "面单打印失败", error)
+
+    def handle_label_printing_success(self, result):
+        output_paths = result.get("output_paths", [])
+        total_pages = int(result.get("total_pages", 0))
+        matched_pages = int(result.get("matched_pages", 0))
+        excluded_pages = int(result.get("excluded_pages", 0))
+        printed_pages = max(0, matched_pages - excluded_pages)
+        elapsed = max(0, int(time.monotonic() - getattr(self, "label_printing_started_at", time.monotonic())))
+        output_dir = result.get("output_dir", "")
+        self.label_output_dir_input.setText(output_dir)
+        self.add_label_log("SUCCESS", f"面单打印文件已生成至: {output_dir}")
+        self.add_label_log("INFO", f"总页数: {total_pages}；匹配: {matched_pages}；可打印: {printed_pages}；排除: {excluded_pages}")
+        for output_path in output_paths:
+            self.add_label_log("INFO", f"生成文件: {Path(output_path).name}")
+        self.data_manager.add_record({
+            "type": "面单打印",
+            "source": self.label_source_input.text().strip(),
+            "output": output_dir,
+            "total": total_pages,
+            "success": printed_pages,
+            "failed": excluded_pages,
+            "elapsed": elapsed,
+            "note": f"匹配 {matched_pages} 页，输出 {len(output_paths)} 个文件",
+        })
+        self.refresh_dashboard()
+        self.refresh_statistics()
+        self.play_done_sound()
+        names = "\n".join(f"- {Path(path).name}" for path in output_paths) or "- 未生成可打印文件"
+        show_info(
+            self,
+            "面单打印完成",
+            f"总页数：{total_pages}\n匹配页数：{matched_pages}\n可打印页数：{printed_pages}\n排除页数：{excluded_pages}"
+            f"\n输出目录：{output_dir}\n\n生成文件：\n{names}",
+        )
+
+    def clear_label_printing_worker(self):
+        self.label_printing_worker = None
+        self.label_printing_thread = None
+
+    def add_label_log(self, level, message):
+        self.write_log_to_widget(self.label_log_text, level, message)
+        if bool(self.settings.get("save_logs", True)):
+            self.logger.write(level, message)
+
     def select_pdf(self):
         self.play_click_sound()
         paths, _ = QFileDialog.getOpenFileNames(self, "选择一个或多个 PDF", "", "PDF Files (*.pdf)")
@@ -3170,7 +3492,7 @@ class MainWindow(QMainWindow):
         self.update_now_button.setEnabled(False)
 
     def open_update_settings(self):
-        self.set_page(7)
+        self.set_page(8)
         self.restore_from_tray()
 
     def start_latest_update(self):
