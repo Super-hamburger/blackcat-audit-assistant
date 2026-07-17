@@ -41,7 +41,7 @@ class LabelPrintingError(Exception):
 def parse_pdf_label_marker(text, page_number):
     raw_text = str(text or "")
     matches = MARKER_PATTERN.findall(raw_text)
-    if "LP[" in raw_text and not matches:
+    if len(matches) != raw_text.count("LP["):
         raise LabelPrintingError(f"第{page_number}页标记格式错误")
     unique = {(shelf.strip(), customer_id.strip()) for shelf, customer_id in matches}
     if len(unique) > 1:

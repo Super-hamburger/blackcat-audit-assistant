@@ -463,6 +463,18 @@ class PdfOnlyLabelPrintingProcessorTest(unittest.TestCase):
         self.assertEqual(list(self.output_dir.glob("**/*.pdf")), [])
         self.assertTrue(any(self.output_dir.glob("**/异常报告.csv")))
 
+    def test_pdf_only_rejects_incomplete_marker_alongside_valid_marker(self):
+        self.make_pdf(
+            self.pdf_path,
+            ["TEL a123456789012a LP[2-1/12027] LP[3-1/12028"],
+        )
+
+        with self.assertRaisesRegex(LabelPrintingError, "标记格式错误"):
+            self.run_pdf_only()
+
+        self.assertEqual(list(self.output_dir.glob("**/*.pdf")), [])
+        self.assertTrue(any(self.output_dir.glob("**/异常报告.csv")))
+
     def test_pdf_only_rejects_multiple_different_markers_without_partial_pdf(self):
         self.make_pdf(
             self.pdf_path,
