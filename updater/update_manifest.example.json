@@ -1,14 +1,14 @@
 {
-  "latest_version": "4.4.3",
-  "message": "正式版 4.4.3：文件粘贴支持真实进度、暂停/结束和按 SKU 类型分文件输出。",
+  "latest_version": "4.4.4",
+  "message": "正式版 4.4.4：文件粘贴三类输出、按客户面单打印和扫码工作台体验升级。",
   "manifest_url": "https://super-hamburger.github.io/blackcat-audit-assistant/update_manifest.json",
-  "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.4.3/BlackCatAuditAssistant_Setup_4.4.3.zip",
+  "download_url": "https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v4.4.4/BlackCatAuditAssistant_Setup_4.4.4.zip",
   "package_sha256": "a60926f31f625e44f021221623767ec2d756961a0c386b5c66db258c0d3d0a2f",
   "mandatory": false,
   "published_at": "2026-07-17T00:22:46+08:00",
   "release_notes": [
-    "文件粘贴进度按实际读取、排序和写入行数显示，支持暂停、继续与结束任务。",
-    "成品表按单 SKU（*1 和 *N）与多 SKU 分为独立 Excel，每份最多 999 条。",
-    "扫码验单兼容更多扫码枪输入方式，并增加强制错误警示音。"
+    "文件粘贴按 Windows 安全文件名输出 SKU×1、SKU×N和多SKU、完整成品表三类文件。",
+    "面单打印支持按客户分开或全部客户一次打印，并可分别处理投函和宅急便。",
+    "扫码验单使用非模态异常视觉反馈，并将整体进度和当前出库单状态集中到扫码工作台。"
   ]
 }
