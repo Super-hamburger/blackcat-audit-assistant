@@ -2,7 +2,7 @@
   "id": "label_printing",
   "name_key": "module.label_printing.name",
   "description_key": "module.label_printing.description",
-  "version": "4.4.4",
+  "version": "5.0.0",
   "enabled": true,
   "category": "business"
 }
