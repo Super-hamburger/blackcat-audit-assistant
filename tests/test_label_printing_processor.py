@@ -187,6 +187,21 @@ class PdfOnlyLabelPrintingProcessorTest(unittest.TestCase):
 
         opener.assert_not_called()
 
+    def test_cleanup_continues_after_one_created_file_cannot_be_deleted(self):
+        first_path = self.base_path / "first.pdf"
+        second_path = self.base_path / "second.pdf"
+        deleted_paths = []
+
+        def unlink(path, *, missing_ok=False):
+            deleted_paths.append(path)
+            if path == first_path:
+                raise OSError("first output is locked")
+
+        with patch.object(Path, "unlink", autospec=True, side_effect=unlink):
+            label_printing_processor._remove_created_files([first_path, second_path])
+
+        self.assertEqual(deleted_paths, [first_path, second_path])
+
     def test_pdf_only_with_no_markers_returns_zero_outputs(self):
         self.make_pdf(self.pdf_path, ["TEL a123456789012a ordinary-multi-sku-page"])
         result = self.run_pdf_only()

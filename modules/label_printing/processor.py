@@ -153,7 +153,10 @@ def _write_exception_report(task_dir, rows):
 
 def _remove_created_files(paths):
     for path in paths:
-        Path(path).unlink(missing_ok=True)
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            continue
 
 
 class PdfOnlyLabelPrintProcessor:
