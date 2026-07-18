@@ -235,6 +235,7 @@ class MainWindow(QMainWindow):
         self.update_install_info = None
         self.update_prepare_result = None
         self.update_retry_requested = False
+        self.update_retry_active = False
         self.update_confirm_dialog = None
         self.update_progress_dialog = None
         self.excel_conversion_thread = None
@@ -3591,6 +3592,7 @@ class MainWindow(QMainWindow):
 
         self.update_install_info = dict(update_info)
         self.update_retry_requested = False
+        self.update_retry_active = False
         if self.update_progress_dialog is None:
             self.update_progress_dialog = UpdateProgressDialog(self)
             self.update_progress_dialog.retry_requested.connect(self.retry_latest_update)
@@ -3627,9 +3629,12 @@ class MainWindow(QMainWindow):
             self.update_progress_dialog.show_progress(event)
 
     def handle_update_install_result(self, result):
+        self.update_retry_active = False
         self.update_prepare_result = dict(result) if result.get("ok") else None
         if self.update_progress_dialog:
             self.update_progress_dialog.show_result(result)
+            if not result.get("ok"):
+                self.update_progress_dialog.retry_button.setEnabled(True)
             self.update_progress_dialog.show()
             self.update_progress_dialog.raise_()
             self.update_progress_dialog.activateWindow()
@@ -3646,20 +3651,40 @@ class MainWindow(QMainWindow):
             return
         self.update_install_thread = None
         self.update_install_worker = None
-        self.refresh_update_action_controls()
         if self.update_retry_requested:
             self.update_retry_requested = False
-            QTimer.singleShot(0, self.retry_latest_update)
+            self.update_retry_active = True
+            if self.update_progress_dialog:
+                self.update_progress_dialog.show_progress({"message": "正在重新准备更新..."})
+            if self.start_update_install_worker():
+                return
+            self.update_retry_active = False
+            if self.update_progress_dialog:
+                self.update_progress_dialog.retry_button.setEnabled(True)
+                self.update_progress_dialog.retry_button.setVisible(True)
+        self.refresh_update_action_controls()
 
     def retry_latest_update(self):
         if not self.update_install_info:
             return
+        if self.update_retry_requested or self.update_retry_active:
+            return
         if self.update_install_thread is not None:
             self.update_retry_requested = True
+            if self.update_progress_dialog:
+                self.update_progress_dialog.retry_button.setEnabled(False)
+                self.update_progress_dialog.retry_button.setVisible(False)
             return
+        self.update_retry_active = True
         if self.update_progress_dialog:
+            self.update_progress_dialog.retry_button.setEnabled(False)
+            self.update_progress_dialog.retry_button.setVisible(False)
             self.update_progress_dialog.show_progress({"message": "正在重新准备更新..."})
-        self.start_update_install_worker()
+        if not self.start_update_install_worker():
+            self.update_retry_active = False
+            if self.update_progress_dialog:
+                self.update_progress_dialog.retry_button.setEnabled(True)
+                self.update_progress_dialog.retry_button.setVisible(True)
 
     def confirm_update_restart(self):
         prepare_result = self.update_prepare_result or {}

@@ -76,6 +76,21 @@ class QueuedCleanupUpdateInstaller(RecordingUpdateInstaller):
         return super().prepare_update(update_info, progress_callback)
 
 
+class BlockingReplacementInstaller(RecordingUpdateInstaller):
+    def __init__(self):
+        super().__init__([
+            {"ok": True, "message": "更新包已准备完成。", "script_path": "C:/temp/apply_update.bat"},
+            {"ok": True, "message": "不应启动第二次替换。", "script_path": "C:/temp/apply_update_2.bat"},
+        ])
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def prepare_update(self, update_info, progress_callback=None):
+        self.started.set()
+        self.release.wait(3.0)
+        return super().prepare_update(update_info, progress_callback)
+
+
 class UpdateNotificationStateTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -96,6 +111,7 @@ class UpdateNotificationStateTest(unittest.TestCase):
         window.update_install_info = None
         window.update_prepare_result = None
         window.update_retry_requested = False
+        window.update_retry_active = False
         window.update_confirm_dialog = None
         window.update_progress_dialog = None
         window.update_check_buttons = [QPushButton("检查更新", window)]
@@ -298,6 +314,54 @@ class UpdateNotificationStateTest(unittest.TestCase):
 
         self.assertTrue(kept_old_reference)
         self.assertTrue(stale_cleanup_preserved_new_task)
+        window.deleteLater()
+
+    def test_two_retry_activations_across_cleanup_start_only_one_replacement(self):
+        installer = BlockingReplacementInstaller()
+        window = self.make_window(update_installer=installer)
+        window.update_install_info = {
+            "has_update": True,
+            "current_version": "5.0.0",
+            "latest_version": "5.0.1",
+            "download_url": "https://updates.example.test/update.zip",
+            "package_sha256": "a" * 64,
+        }
+        window.update_progress_dialog = main_window.UpdateProgressDialog(window)
+        window.update_progress_dialog.show_result({"ok": False, "message": "下载失败。"})
+        window.update_progress_dialog.show()
+        self.application.processEvents()
+
+        old_thread = QThread(window)
+        window.update_install_thread = old_thread
+        old_thread.start()
+        old_thread.quit()
+        self.assertTrue(old_thread.wait(3000))
+        self.assertFalse(old_thread.isRunning())
+
+        main_window.MainWindow.retry_latest_update(window)
+        retry_was_hidden = not window.update_progress_dialog.retry_button.isVisible()
+        retry_was_disabled = not window.update_progress_dialog.retry_button.isEnabled()
+
+        main_window.MainWindow.clear_update_install_worker(window, old_thread)
+        main_window.MainWindow.retry_latest_update(window)
+        self.assertTrue(installer.started.wait(3.0))
+        self.application.processEvents()
+        installer.release.set()
+
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            self.application.processEvents()
+            time.sleep(0.01)
+
+        active_thread = window.update_install_thread
+        if active_thread and active_thread.isRunning():
+            active_thread.quit()
+            active_thread.wait(3000)
+            self.application.processEvents()
+
+        self.assertEqual(len(installer.prepare_threads), 1)
+        self.assertTrue(retry_was_hidden)
+        self.assertTrue(retry_was_disabled)
         window.deleteLater()
 
 
