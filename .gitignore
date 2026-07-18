@@ -9,6 +9,7 @@ __pycache__/
 BlackCatAuditAssistant_Setup/
 BlackCatAuditAssistant_Temp_Setup/
 BlackCatAuditAssistant_Temp_Workspace/
+.worktrees/
 BlackCatAuditAssistant_Release_*/
 *.zip
 *.7z
