@@ -481,7 +481,7 @@ class UploadConverter:
                 ad_value, ac_value = split_item_text_for_ad(item_text)
                 ab_value = record["shelf"]
                 if is_strict_single_sku(record):
-                    ad_value = make_pdf_label_marker(
+                    ab_value = make_pdf_label_marker(
                         record["shelf"], record["customer_id"], record["reference"]
                     )
             else:

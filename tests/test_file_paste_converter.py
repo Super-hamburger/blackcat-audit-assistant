@@ -104,7 +104,7 @@ class UploadConverterTest(unittest.TestCase):
             "LP[1-3-2-1/12029]",
         )
 
-    def test_complete_sheet_replaces_ad_only_for_strict_single_sku(self):
+    def test_complete_sheet_writes_marker_to_ab_and_keeps_item_text_in_ad(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_path = Path(temp_dir) / "one-piece.xlsx"
             headers = ONE_PIECE_HEADERS + ["数量", "货架", "运输方式", "客户编号"]
@@ -116,11 +116,15 @@ class UploadConverterTest(unittest.TestCase):
             result = UploadConverter().convert(source_path, Path(temp_dir), open_after=False)
             complete_book = load_workbook(result["output_paths"][2], data_only=True)
             try:
+                ab_values = [complete_book.active[f"AB{row}"].value for row in (2, 3)]
+                ac_values = [complete_book.active[f"AC{row}"].value for row in (2, 3)]
                 ad_values = [complete_book.active[f"AD{row}"].value for row in (2, 3)]
             finally:
                 complete_book.close()
 
-        self.assertEqual(ad_values, ["LP[1-3-2-1/12029]", "SKU-MANY*2"])
+        self.assertEqual(ab_values, ["LP[1-3-2-1/12029]", "1-3-2-2"])
+        self.assertEqual(ac_values, [None, None])
+        self.assertEqual(ad_values, ["SKU-ONE*1", "SKU-MANY*2"])
 
     def test_marker_rejects_invalid_components(self):
         with self.assertRaisesRegex(ConversionError, "REF-BAD"):
@@ -184,7 +188,8 @@ class UploadConverterTest(unittest.TestCase):
         ])
 
         self.assertEqual(values[1][28], f"{long_sku}*1")
-        self.assertEqual(values[1][29], "LP[1-1/12029]")
+        self.assertEqual(values[1][27], "LP[1-1/12029]")
+        self.assertIsNone(values[1][29])
 
     def test_blackcat_uses_template_header_sku_and_detail_columns(self):
         result, values, _ = self.convert_and_load_blackcat({
