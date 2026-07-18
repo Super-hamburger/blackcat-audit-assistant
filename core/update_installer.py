@@ -38,7 +38,10 @@ class UpdateInstaller:
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            self.download_file(download_url, package_path, progress_callback)
+            if progress_callback is None:
+                self.download_file(download_url, package_path)
+            else:
+                self.download_file(download_url, package_path, progress_callback)
             self.emit_progress(progress_callback, "verifying", "正在校验安装包...")
             actual_sha256 = self.file_sha256(package_path)
             if actual_sha256.lower() != expected_sha256:

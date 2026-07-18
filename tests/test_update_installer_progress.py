@@ -21,6 +21,32 @@ class FakeResponse(io.BytesIO):
 
 
 class UpdateInstallerProgressTests(unittest.TestCase):
+    def test_prepare_update_keeps_legacy_two_argument_download_override_without_callback(self):
+        class LegacyDownloadInstaller(UpdateInstaller):
+            def download_file(self, url, target):
+                target.write_bytes(package_path.read_bytes())
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            package_path = temporary_path / "update.zip"
+            with zipfile.ZipFile(package_path, "w") as archive:
+                archive.writestr("BlackCatAuditAssistant/BlackCatAuditAssistant.exe", b"updated-app")
+            package_sha256 = UpdateInstaller().file_sha256(package_path)
+            install_directory = temporary_path / "installed"
+            install_directory.mkdir()
+            current_executable = install_directory / "BlackCatAuditAssistant.exe"
+            current_executable.write_bytes(b"current-app")
+
+            with patch("core.update_installer.sys.frozen", True, create=True), \
+                    patch("core.update_installer.sys.executable", str(current_executable)):
+                result = LegacyDownloadInstaller().prepare_update({
+                    "download_url": "https://example.test/update.zip",
+                    "package_sha256": package_sha256,
+                    "latest_version": "5.0.1",
+                })
+
+        self.assertTrue(result["ok"])
+
     def test_download_file_reports_known_size_progress(self):
         events = []
         content = b"update-package"
