@@ -44,3 +44,21 @@ class UpdateCheckWorker(QObject):
                 "remote_error": str(error),
             }
         self.check_finished.emit(result)
+
+
+class UpdateInstallWorker(QObject):
+    progress = Signal(dict)
+    install_finished = Signal(dict)
+
+    def __init__(self, installer, update_info):
+        super().__init__()
+        self.installer = installer
+        self.update_info = dict(update_info)
+
+    @Slot()
+    def run(self):
+        try:
+            result = self.installer.prepare_update(self.update_info, self.progress.emit)
+        except Exception as error:
+            result = {"ok": False, "message": f"准备更新失败：{error}"}
+        self.install_finished.emit(result)
