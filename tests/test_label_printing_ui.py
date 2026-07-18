@@ -25,7 +25,7 @@ class LabelPrintingUiTest(unittest.TestCase):
 
         registry = Registry()
         worker = main_window.LabelPrintingWorker(registry, {
-            "source_path": "source.xlsx", "finished_path": "finished.xlsx", "pdf_paths": ["labels.pdf"],
+            "mode": "pdf_only_trial", "pdf_paths": ["labels.pdf"],
             "output_dir": "out", "scope": "by_customer", "split_types": True, "open_after": False,
         })
         results = []
@@ -36,6 +36,7 @@ class LabelPrintingUiTest(unittest.TestCase):
         worker.run()
 
         self.assertEqual(registry.module_id, "label_printing")
+        self.assertEqual(registry.context["mode"], "pdf_only_trial")
         self.assertEqual(registry.context["scope"], "by_customer")
         self.assertTrue(registry.context["split_types"])
         self.assertFalse(registry.context["open_after"])
@@ -65,22 +66,19 @@ class LabelPrintingUiTest(unittest.TestCase):
             window.close()
             app.processEvents()
 
-    def test_trial_mode_hides_excel_inputs_and_routes_pdf_only_context(self):
+    def test_pdf_only_page_has_no_excel_or_mode_controls(self):
         app = self.application()
         window = main_window.MainWindow()
         try:
-            window.show()
-            app.processEvents()
-            window.label_input_mode.setCurrentIndex(
-                window.label_input_mode.findData("pdf_only_trial")
-            )
-            window.on_label_input_mode_changed()
+            self.assertFalse(hasattr(window, "label_input_mode"))
+            self.assertFalse(hasattr(window, "label_source_input"))
+            self.assertFalse(hasattr(window, "label_finished_input"))
             window.label_pdf_input.setText(str(Path(__file__).resolve()))
             window.label_output_dir_input.setText(str(Path.cwd()))
-
-            self.assertFalse(window.label_source_input.isVisible())
-            self.assertFalse(window.label_finished_input.isVisible())
-            self.assertEqual(window.get_label_printing_context()["mode"], "pdf_only_trial")
+            context = window.get_label_printing_context()
+            self.assertEqual(context["mode"], "pdf_only_trial")
+            self.assertNotIn("source_path", context)
+            self.assertNotIn("finished_path", context)
         finally:
             window.close()
             app.processEvents()

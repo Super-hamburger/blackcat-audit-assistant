@@ -10,12 +10,13 @@ class PortableBuildConfigurationTest(unittest.TestCase):
 
         self.assertIn("label_printing", module_ids)
 
-    def test_label_printing_module_requires_all_input_categories(self):
+    def test_label_printing_module_requires_pdf_inputs_only(self):
         result = ModuleRegistry().run("label_printing", {})
 
         self.assertFalse(result.ok)
-        for key in ("source_path", "finished_path", "pdf_paths", "output_dir"):
-            self.assertIn(key, result.message)
+        self.assertIn("pdf_paths", result.message)
+        self.assertIn("output_dir", result.message)
+        self.assertNotIn("source_path", result.message)
 
     def test_pdf_only_module_does_not_require_excel_paths(self):
         result = ModuleRegistry().run("label_printing", {

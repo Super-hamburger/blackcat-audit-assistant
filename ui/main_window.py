@@ -796,8 +796,8 @@ class MainWindow(QMainWindow):
 
         intro = self.create_card("🖨 面单打印工作台")
         description = QLabel(
-            "选择原始一件代发表、完整成品表和一个或多个黑猫面单 PDF，"
-            "按货架顺序生成打印文件；原始 PDF 不会被修改。"
+            "上传一个或多个由黑猫生成、且带有 LP[货架/客户编号] 标记的面单 PDF，"
+            "按货架顺序生成打印文件；未标记页会排除，原始 PDF 不会被修改。"
         )
         description.setObjectName("BodyText")
         description.setWordWrap(True)
@@ -809,20 +809,6 @@ class MainWindow(QMainWindow):
         layout.addLayout(workspace)
 
         config_card = self.create_card("1. 文件与打印范围")
-        config_card.layout().addLayout(self.section_label("输入方式"))
-        self.label_input_mode = QComboBox()
-        self.label_input_mode.addItem("Excel + PDF（原流程）", "excel")
-        self.label_input_mode.addItem("仅上传 PDF（试验）", "pdf_only_trial")
-        self.label_input_mode.currentIndexChanged.connect(self.on_label_input_mode_changed)
-        config_card.layout().addWidget(self.label_input_mode)
-        self.label_source_row = self._add_label_printing_file_row(
-            config_card, "原始一件代发表", "请选择原始一件代发 Excel（.xlsx）",
-            "label_source_input", self.select_label_source,
-        )
-        self.label_finished_row = self._add_label_printing_file_row(
-            config_card, "完整成品表", "请选择完整成品 Excel（.xlsx）",
-            "label_finished_input", self.select_label_finished,
-        )
         self._add_label_printing_file_row(
             config_card, "黑猫面单 PDF", "可选择一个或多个面单 PDF",
             "label_pdf_input", self.select_label_pdfs,
@@ -864,9 +850,6 @@ class MainWindow(QMainWindow):
         self.label_start_button.clicked.connect(self.start_label_printing)
         config_card.layout().addWidget(self.label_start_button)
         self.label_printing_controls = [
-            self.label_input_mode,
-            self.label_source_input, self.label_source_input_button,
-            self.label_finished_input, self.label_finished_input_button,
             self.label_pdf_input, self.label_pdf_input_button,
             self.label_output_dir_input, self.label_output_dir_button,
             self.label_scope_combo, self.label_split_types_combo,
@@ -2244,24 +2227,6 @@ class MainWindow(QMainWindow):
         self.task_manager.done.connect(self.on_done)
         self.task_manager.error.connect(self.on_error)
 
-    def select_label_source(self):
-        self.play_click_sound()
-        path, _ = QFileDialog.getOpenFileName(
-            self, "选择原始一件代发表", "", "Excel Files (*.xlsx *.xlsm)"
-        )
-        if path:
-            self.label_source_input.setText(path)
-            self.add_label_log("INFO", f"已选择原始一件代发表: {path}")
-
-    def select_label_finished(self):
-        self.play_click_sound()
-        path, _ = QFileDialog.getOpenFileName(
-            self, "选择完整成品表", "", "Excel Files (*.xlsx *.xlsm)"
-        )
-        if path:
-            self.label_finished_input.setText(path)
-            self.add_label_log("INFO", f"已选择完整成品表: {path}")
-
     def select_label_pdfs(self):
         self.play_click_sound()
         paths, _ = QFileDialog.getOpenFileNames(
@@ -2278,32 +2243,8 @@ class MainWindow(QMainWindow):
             self.label_output_dir_input.setText(path)
             self.add_label_log("INFO", f"已选择输出目录: {path}")
 
-    def on_label_input_mode_changed(self):
-        is_pdf_only_trial = self.label_input_mode.currentData() == "pdf_only_trial"
-        self.label_source_row.setVisible(not is_pdf_only_trial)
-        self.label_finished_row.setVisible(not is_pdf_only_trial)
-        if is_pdf_only_trial:
-            self.add_label_log("INFO", "已切换至仅上传 PDF 试验模式。")
-
     def get_label_printing_context(self):
-        mode = self.label_input_mode.currentData()
-        is_pdf_only_trial = mode == "pdf_only_trial"
-        source_path = self.label_source_input.text().strip()
-        finished_path = self.label_finished_input.text().strip()
         pdf_paths = [path for path in self.label_pdf_input.text().split("|") if path]
-        if not is_pdf_only_trial:
-            missing = []
-            for name, path in (("原始一件代发表", source_path), ("完整成品表", finished_path)):
-                if not path:
-                    missing.append(name)
-                elif not Path(path).is_file():
-                    show_warning(self, "面单打印", f"{name}不存在或不是文件：\n{path}")
-                    self.play_error_sound()
-                    return None
-            if missing:
-                show_warning(self, "面单打印", "请先选择：" + "、".join(missing))
-                self.play_error_sound()
-                return None
         if not pdf_paths:
             show_warning(self, "面单打印", "请至少选择一个黑猫面单 PDF。")
             self.play_error_sound()
@@ -2321,9 +2262,7 @@ class MainWindow(QMainWindow):
             self.play_error_sound()
             return None
         return {
-            "mode": mode,
-            "source_path": source_path,
-            "finished_path": finished_path,
+            "mode": "pdf_only_trial",
             "pdf_paths": pdf_paths,
             "output_dir": str(output_dir),
             "scope": self.label_scope_combo.currentData(),
@@ -2339,15 +2278,10 @@ class MainWindow(QMainWindow):
         if not context:
             return
 
-        self.label_printing_mode = context["mode"]
         self.label_printing_started_at = time.monotonic()
         self.label_progress_bar.setRange(0, 0)
-        if self.label_printing_mode == "pdf_only_trial":
-            self.label_progress_status.setText("正在准备仅上传 PDF 试验任务...")
-            self.add_label_log("INFO", "开始仅上传 PDF 试验模式")
-        else:
-            self.label_progress_status.setText("正在准备面单打印任务...")
-            self.add_label_log("INFO", "开始面单打印任务")
+        self.label_progress_status.setText("正在准备仅上传 PDF 任务...")
+        self.add_label_log("INFO", "开始仅上传 PDF 任务")
         self.set_label_printing_controls_enabled(False)
 
         self.label_printing_thread = QThread(self)
@@ -2396,9 +2330,6 @@ class MainWindow(QMainWindow):
         show_warning(self, "面单打印失败", error)
 
     def handle_label_printing_success(self, result):
-        is_pdf_only_trial = getattr(
-            self, "label_printing_mode", self.label_input_mode.currentData()
-        ) == "pdf_only_trial"
         output_paths = result.get("output_paths", [])
         total_pages = int(result.get("total_pages", 0))
         matched_pages = int(result.get("matched_pages", 0))
@@ -2418,13 +2349,12 @@ class MainWindow(QMainWindow):
             f"排除: {excluded_pages}；客户数: {customer_count}；"
             f"投函: {toukan_count}；宅急便: {takkyubin_count}",
         )
-        if is_pdf_only_trial:
-            self.add_label_log("INFO", "仅上传 PDF 试验模式完成：未标记页已排除。")
+        self.add_label_log("INFO", "仅上传 PDF 模式完成：未标记页已排除。")
         for output_path in output_paths:
             self.add_label_log("INFO", f"生成文件: {Path(output_path).name}")
         self.data_manager.add_record({
             "type": "面单打印",
-            "source": "仅上传 PDF（试验）" if is_pdf_only_trial else self.label_source_input.text().strip(),
+            "source": "仅上传 PDF",
             "output": output_dir,
             "total": total_pages,
             "success": printed_pages,
@@ -2438,13 +2368,12 @@ class MainWindow(QMainWindow):
         names = "\n".join(f"- {Path(path).name}" for path in output_paths)
         if not names:
             names = "- 没有可打印的 SKU×1 面单"
-        trial_note = "\n说明：仅上传 PDF 试验模式中未标记页已排除。" if is_pdf_only_trial else ""
         show_info(
             self,
             "面单打印完成",
             f"总页数：{total_pages}\n匹配页数：{matched_pages}\n已打印页数：{printed_pages}\n排除页数：{excluded_pages}"
             f"\n客户数：{customer_count}\n投函：{toukan_count}；宅急便：{takkyubin_count}"
-            f"\n输出目录：{output_dir}\n\n生成文件：\n{names}{trial_note}",
+            f"\n输出目录：{output_dir}\n\n生成文件：\n{names}\n说明：未标记页已排除。",
         )
 
     def clear_label_printing_worker(self):
