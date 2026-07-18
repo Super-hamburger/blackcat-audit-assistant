@@ -1,4 +1,5 @@
 import os
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -56,6 +57,23 @@ class RecordingUpdateInstaller:
 
     def launch_update_script(self, script_path):
         self.launched_scripts.append(script_path)
+
+
+class QueuedCleanupUpdateInstaller(RecordingUpdateInstaller):
+    def __init__(self):
+        super().__init__([
+            {"ok": False, "message": "下载失败。"},
+            {"ok": True, "message": "更新包已准备完成。", "script_path": "C:/temp/apply_update.bat"},
+        ])
+        self.second_started = threading.Event()
+        self.release_second = threading.Event()
+
+    def prepare_update(self, update_info, progress_callback=None):
+        call_index = len(self.prepare_threads)
+        if call_index == 1:
+            self.second_started.set()
+            self.release_second.wait(3.0)
+        return super().prepare_update(update_info, progress_callback)
 
 
 class UpdateNotificationStateTest(unittest.TestCase):
@@ -210,6 +228,76 @@ class UpdateNotificationStateTest(unittest.TestCase):
 
         self.assertEqual(len(installer.prepare_threads), 2)
         self.assertTrue(window.update_prepare_result["ok"])
+        window.deleteLater()
+
+    def test_failed_result_reopens_a_progress_dialog_closed_while_active(self):
+        window = self.make_window()
+        window.update_progress_dialog = main_window.UpdateProgressDialog(window)
+        window.update_progress_dialog.show()
+        self.application.processEvents()
+        window.update_progress_dialog.reject()
+        self.assertFalse(window.update_progress_dialog.isVisible())
+
+        main_window.MainWindow.handle_update_install_result(
+            window,
+            {"ok": False, "message": "下载失败。"},
+        )
+        self.application.processEvents()
+
+        self.assertTrue(window.update_progress_dialog.isVisible())
+        self.assertTrue(window.update_progress_dialog.retry_button.isVisible())
+        window.update_progress_dialog.close()
+        window.deleteLater()
+
+    def test_retry_waits_for_queued_cleanup_and_stale_cleanup_cannot_clear_new_worker(self):
+        installer = QueuedCleanupUpdateInstaller()
+        window = self.make_window(update_installer=installer)
+        update_info = {
+            "has_update": True,
+            "current_version": "5.0.0",
+            "latest_version": "5.0.1",
+            "download_url": "https://updates.example.test/update.zip",
+            "package_sha256": "a" * 64,
+        }
+        threads_to_wait = []
+        kept_old_reference = False
+        stale_cleanup_preserved_new_task = False
+
+        with patch.object(main_window.sys, "frozen", True, create=True):
+            main_window.MainWindow.start_one_click_update(window, update_info)
+            old_thread = window.update_install_thread
+            deadline = time.monotonic() + 3.0
+            while len(installer.prepare_threads) < 1 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertEqual(len(installer.prepare_threads), 1)
+            old_thread.quit()
+            self.assertTrue(old_thread.wait(3000))
+            self.assertFalse(old_thread.isRunning())
+            self.assertIs(window.update_install_thread, old_thread)
+
+            try:
+                main_window.MainWindow.retry_latest_update(window)
+                kept_old_reference = window.update_install_thread is old_thread
+                if kept_old_reference:
+                    self.wait_until(installer.second_started.is_set)
+                    new_thread = window.update_install_thread
+                    threads_to_wait.append(new_thread)
+                    self.assertIsNot(new_thread, old_thread)
+                    main_window.MainWindow.clear_update_install_worker(window, old_thread)
+                    stale_cleanup_preserved_new_task = window.update_install_thread is new_thread
+            finally:
+                current_thread = window.update_install_thread
+                if current_thread and current_thread not in threads_to_wait:
+                    threads_to_wait.append(current_thread)
+                installer.release_second.set()
+                for thread in threads_to_wait:
+                    if thread and thread.isRunning():
+                        thread.quit()
+                        thread.wait(3000)
+                self.application.processEvents()
+
+        self.assertTrue(kept_old_reference)
+        self.assertTrue(stale_cleanup_preserved_new_task)
         window.deleteLater()
 
 

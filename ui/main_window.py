@@ -3602,7 +3602,7 @@ class MainWindow(QMainWindow):
         self.start_update_install_worker()
 
     def start_update_install_worker(self):
-        if self.update_install_thread and self.update_install_thread.isRunning():
+        if self.update_install_thread is not None:
             return False
         if not self.update_install_info:
             return False
@@ -3616,7 +3616,7 @@ class MainWindow(QMainWindow):
         self.update_install_worker.install_finished.connect(self.handle_update_install_result)
         self.update_install_worker.install_finished.connect(self.update_install_thread.quit)
         self.update_install_worker.install_finished.connect(self.update_install_worker.deleteLater)
-        self.update_install_thread.finished.connect(self.clear_update_install_worker)
+        self.update_install_thread.finished.connect(self.on_update_install_thread_finished)
         self.update_install_thread.finished.connect(self.update_install_thread.deleteLater)
         self.refresh_update_action_controls()
         self.update_install_thread.start()
@@ -3630,12 +3630,20 @@ class MainWindow(QMainWindow):
         self.update_prepare_result = dict(result) if result.get("ok") else None
         if self.update_progress_dialog:
             self.update_progress_dialog.show_result(result)
+            self.update_progress_dialog.show()
+            self.update_progress_dialog.raise_()
+            self.update_progress_dialog.activateWindow()
         if result.get("ok"):
             self.play_done_sound()
         else:
             self.play_error_sound()
 
-    def clear_update_install_worker(self):
+    def on_update_install_thread_finished(self):
+        self.clear_update_install_worker(self.sender())
+
+    def clear_update_install_worker(self, finished_thread=None):
+        if finished_thread is not self.update_install_thread:
+            return
         self.update_install_thread = None
         self.update_install_worker = None
         self.refresh_update_action_controls()
@@ -3646,7 +3654,7 @@ class MainWindow(QMainWindow):
     def retry_latest_update(self):
         if not self.update_install_info:
             return
-        if self.update_install_thread and self.update_install_thread.isRunning():
+        if self.update_install_thread is not None:
             self.update_retry_requested = True
             return
         if self.update_progress_dialog:
