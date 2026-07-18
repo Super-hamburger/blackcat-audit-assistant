@@ -26,8 +26,9 @@ from core.plugin_manager import PluginManager
 from core.i18n_manager import I18nManager
 from core.update_manager import UpdateManager
 from core.update_installer import UpdateInstaller
-from core.update_notification import UpdateCheckWorker, UpdateNotificationState
+from core.update_notification import UpdateCheckWorker, UpdateInstallWorker, UpdateNotificationState
 from ui.widgets.silent_dialog import show_info, show_warning
+from ui.widgets.update_dialog import UpdateConfirmDialog, UpdateProgressDialog
 from modules.scan_check.module import ScanCheckService
 
 
@@ -226,6 +227,16 @@ class MainWindow(QMainWindow):
         self.latest_update_info = None
         self.update_check_thread = None
         self.update_check_worker = None
+        self.update_check_manual = False
+        self.update_check_buttons = []
+        self.update_check_action = None
+        self.update_install_thread = None
+        self.update_install_worker = None
+        self.update_install_info = None
+        self.update_prepare_result = None
+        self.update_retry_requested = False
+        self.update_confirm_dialog = None
+        self.update_progress_dialog = None
         self.excel_conversion_thread = None
         self.excel_conversion_worker = None
         self.label_printing_thread = None
@@ -322,6 +333,7 @@ class MainWindow(QMainWindow):
 
         update_action = QAction("检查更新", self)
         update_action.triggered.connect(self.check_update_status)
+        self.update_check_action = update_action
 
         quit_action = QAction("退出软件", self)
         quit_action.triggered.connect(self.quit_from_tray)
@@ -1549,6 +1561,7 @@ class MainWindow(QMainWindow):
         update_actions = QHBoxLayout()
         update_check_btn = QPushButton("检查更新")
         update_check_btn.clicked.connect(self.check_update_status)
+        self.update_check_buttons.append(update_check_btn)
         self.update_now_button = QPushButton("立即更新")
         self.update_now_button.setObjectName("PrimaryButton")
         self.update_now_button.setEnabled(False)
@@ -1657,6 +1670,7 @@ class MainWindow(QMainWindow):
         plugin_btn.clicked.connect(self.show_plugin_status)
         update_btn = QPushButton("检查更新")
         update_btn.clicked.connect(self.check_update_status)
+        self.update_check_buttons.append(update_btn)
         stage3_row = QHBoxLayout()
         stage3_row.addWidget(plugin_btn)
         stage3_row.addWidget(update_btn)
@@ -3419,23 +3433,60 @@ class MainWindow(QMainWindow):
     def start_background_update_check(self):
         if not self.settings.get("auto_update_check", True):
             return
-        if self.update_check_thread and self.update_check_thread.isRunning():
-            return
+        self.start_update_check(manual=False)
+
+    def update_task_is_active(self):
+        check_active = self.update_check_thread is not None
+        install_active = self.update_install_thread is not None
+        return check_active or install_active
+
+    def refresh_update_action_controls(self):
+        enabled = not self.update_task_is_active()
+        for button in getattr(self, "update_check_buttons", []):
+            button.setEnabled(enabled)
+        if getattr(self, "update_check_action", None):
+            self.update_check_action.setEnabled(enabled)
+        if hasattr(self, "update_now_button"):
+            update_info = self.latest_update_info or {}
+            can_update = bool(
+                update_info.get("has_update")
+                and update_info.get("download_url")
+                and update_info.get("package_sha256")
+            )
+            self.update_now_button.setEnabled(enabled and can_update)
+
+    def start_update_check(self, manual):
+        if self.update_task_is_active():
+            return False
+
+        self.update_check_manual = bool(manual)
+        if manual and hasattr(self, "update_status_label"):
+            self.update_status_label.setText("正在检查更新，请稍候...")
 
         self.update_check_thread = QThread(self)
         self.update_check_worker = UpdateCheckWorker(self.update_manager)
         self.update_check_worker.moveToThread(self.update_check_thread)
         self.update_check_thread.started.connect(self.update_check_worker.run)
-        self.update_check_worker.check_finished.connect(self.handle_background_update_result)
+        self.update_check_worker.check_finished.connect(self.handle_update_check_result)
         self.update_check_worker.check_finished.connect(self.update_check_thread.quit)
         self.update_check_worker.check_finished.connect(self.update_check_worker.deleteLater)
         self.update_check_thread.finished.connect(self.clear_update_check_worker)
         self.update_check_thread.finished.connect(self.update_check_thread.deleteLater)
+        self.refresh_update_action_controls()
         self.update_check_thread.start()
+        return True
+
+    def handle_update_check_result(self, result):
+        if self.update_check_manual:
+            self.handle_manual_update_result(result)
+            return
+        self.handle_background_update_result(result)
 
     def clear_update_check_worker(self):
         self.update_check_thread = None
         self.update_check_worker = None
+        self.update_check_manual = False
+        self.refresh_update_action_controls()
 
     def handle_background_update_result(self, result):
         self.latest_update_info = result
@@ -3449,38 +3500,16 @@ class MainWindow(QMainWindow):
                 8000,
             )
 
-    def refresh_update_settings_status(self, result, status=None):
-        if not hasattr(self, "update_status_label"):
-            return
-        current_version = result.get("current_version", APP_VERSION)
-        latest_version = result.get("latest_version") or "--"
-        self.update_version_label.setText(f"当前版本：{current_version}    最新版本：{latest_version}")
-        if status == "check_failed" or result.get("remote_error"):
-            self.update_status_label.setText("自动检查失败，将在下次检查时重试。")
-            self.update_now_button.setEnabled(False)
-            return
-        if result.get("has_update"):
-            self.update_status_label.setText(f"发现新版本 {latest_version}，可立即更新。")
-            can_update = bool(result.get("download_url") and result.get("package_sha256"))
-            self.update_now_button.setEnabled(can_update)
-            return
-        self.update_status_label.setText("当前已是最新版本。")
-        self.update_now_button.setEnabled(False)
-
-    def open_update_settings(self):
-        self.set_page(8)
-        self.restore_from_tray()
-
-    def start_latest_update(self):
-        if not self.latest_update_info or not self.latest_update_info.get("has_update"):
-            show_info(self, "自动更新", "当前没有可安装的新版本。")
-            return
-        self.start_one_click_update(self.latest_update_info)
-
-    def check_update_status(self):
-        result = self.update_manager.check_update()
+    def handle_manual_update_result(self, result):
         self.latest_update_info = result
-        self.refresh_update_settings_status(result)
+        outcome = self.update_notification_state.apply(result)
+        status = outcome.get("status", "up_to_date")
+        self.refresh_update_settings_status(result, status, manual=True)
+        if status == "check_failed" or result.get("remote_error"):
+            detail = str(result.get("remote_error") or result.get("message") or "未知错误")
+            show_warning(self, "检查更新失败", f"无法读取远程更新信息：{detail}\n请检查网络后重试。")
+            return
+
         lines = [
             result.get("message", "暂无更新信息。"),
             f"当前版本：{result.get('current_version', APP_VERSION)}",
@@ -3491,52 +3520,152 @@ class MainWindow(QMainWindow):
             lines.append("状态：发现新版本")
         else:
             lines.append("状态：当前已是最新版本或未配置远程更新源")
-        if result.get("download_url"):
-            lines.append(f"下载地址：{result.get('download_url')}")
-        if result.get("package_sha256"):
-            lines.append(f"SHA256：{result.get('package_sha256')}")
 
-        message = "\n".join(lines)
-        if result.get("has_update") and result.get("download_url") and result.get("package_sha256"):
-            choice = QMessageBox.question(
-                self,
-                "自动更新",
-                message + "\n\n是否立即下载并安装新版？",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
-            )
-            if choice == QMessageBox.Yes:
-                self.start_one_click_update(result)
+        can_update = bool(
+            result.get("has_update")
+            and result.get("download_url")
+            and result.get("package_sha256")
+        )
+        if can_update:
+            self.show_update_confirmation(result)
+            return
+        show_info(self, "自动更新", "\n".join(lines))
+
+    def refresh_update_settings_status(self, result, status=None, manual=False):
+        if not hasattr(self, "update_status_label"):
+            return
+        current_version = result.get("current_version", APP_VERSION)
+        latest_version = result.get("latest_version") or "--"
+        self.update_version_label.setText(f"当前版本：{current_version}    最新版本：{latest_version}")
+        if status == "check_failed" or result.get("remote_error"):
+            if manual:
+                self.update_status_label.setText("检查更新失败，请检查网络后重试。")
+            else:
+                self.update_status_label.setText("自动检查失败，将在下次检查时重试。")
+            self.refresh_update_action_controls()
+            return
+        if result.get("has_update"):
+            self.update_status_label.setText(f"发现新版本 {latest_version}，可立即更新。")
+            self.refresh_update_action_controls()
+            return
+        self.update_status_label.setText("当前已是最新版本。")
+        self.refresh_update_action_controls()
+
+    def open_update_settings(self):
+        self.set_page(8)
+        self.restore_from_tray()
+
+    def start_latest_update(self):
+        if not self.latest_update_info or not self.latest_update_info.get("has_update"):
+            show_info(self, "自动更新", "当前没有可安装的新版本。")
+            return
+        if self.update_task_is_active():
+            return
+        self.show_update_confirmation(self.latest_update_info)
+
+    def check_update_status(self):
+        self.start_update_check(manual=True)
+
+    def show_update_confirmation(self, update_info):
+        if self.update_confirm_dialog and self.update_confirm_dialog.isVisible():
+            self.update_confirm_dialog.raise_()
+            self.update_confirm_dialog.activateWindow()
             return
 
-        show_info(self, "自动更新", message)
+        dialog = UpdateConfirmDialog(update_info, self)
+        dialog.update_requested.connect(lambda: self.start_one_click_update(update_info))
+        dialog.finished.connect(self.clear_update_confirm_dialog)
+        dialog.finished.connect(dialog.deleteLater)
+        self.update_confirm_dialog = dialog
+        dialog.show()
+
+    def clear_update_confirm_dialog(self, _result=None):
+        self.update_confirm_dialog = None
 
     def start_one_click_update(self, update_info):
         if not getattr(sys, "frozen", False):
             show_warning(self, "自动更新", "一键更新只在打包安装后的软件中执行。源码测试时请先完成打包验证。")
             return
+        if self.update_task_is_active():
+            return
 
-        prepare_result = self.update_installer.prepare_update(update_info)
-        if not prepare_result.get("ok"):
+        self.update_install_info = dict(update_info)
+        self.update_retry_requested = False
+        if self.update_progress_dialog is None:
+            self.update_progress_dialog = UpdateProgressDialog(self)
+            self.update_progress_dialog.retry_requested.connect(self.retry_latest_update)
+            self.update_progress_dialog.restart_requested.connect(self.confirm_update_restart)
+        self.update_progress_dialog.show_progress({"message": "正在启动更新任务..."})
+        self.update_progress_dialog.show()
+        self.update_progress_dialog.raise_()
+        self.update_progress_dialog.activateWindow()
+        self.start_update_install_worker()
+
+    def start_update_install_worker(self):
+        if self.update_install_thread and self.update_install_thread.isRunning():
+            return False
+        if not self.update_install_info:
+            return False
+
+        self.update_prepare_result = None
+        self.update_install_thread = QThread(self)
+        self.update_install_worker = UpdateInstallWorker(self.update_installer, self.update_install_info)
+        self.update_install_worker.moveToThread(self.update_install_thread)
+        self.update_install_thread.started.connect(self.update_install_worker.run)
+        self.update_install_worker.progress.connect(self.handle_update_install_progress)
+        self.update_install_worker.install_finished.connect(self.handle_update_install_result)
+        self.update_install_worker.install_finished.connect(self.update_install_thread.quit)
+        self.update_install_worker.install_finished.connect(self.update_install_worker.deleteLater)
+        self.update_install_thread.finished.connect(self.clear_update_install_worker)
+        self.update_install_thread.finished.connect(self.update_install_thread.deleteLater)
+        self.refresh_update_action_controls()
+        self.update_install_thread.start()
+        return True
+
+    def handle_update_install_progress(self, event):
+        if self.update_progress_dialog:
+            self.update_progress_dialog.show_progress(event)
+
+    def handle_update_install_result(self, result):
+        self.update_prepare_result = dict(result) if result.get("ok") else None
+        if self.update_progress_dialog:
+            self.update_progress_dialog.show_result(result)
+        if result.get("ok"):
+            self.play_done_sound()
+        else:
             self.play_error_sound()
-            show_warning(self, "自动更新失败", prepare_result.get("message", "更新准备失败。"))
+
+    def clear_update_install_worker(self):
+        self.update_install_thread = None
+        self.update_install_worker = None
+        self.refresh_update_action_controls()
+        if self.update_retry_requested:
+            self.update_retry_requested = False
+            QTimer.singleShot(0, self.retry_latest_update)
+
+    def retry_latest_update(self):
+        if not self.update_install_info:
+            return
+        if self.update_install_thread and self.update_install_thread.isRunning():
+            self.update_retry_requested = True
+            return
+        if self.update_progress_dialog:
+            self.update_progress_dialog.show_progress({"message": "正在重新准备更新..."})
+        self.start_update_install_worker()
+
+    def confirm_update_restart(self):
+        prepare_result = self.update_prepare_result or {}
+        script_path = prepare_result.get("script_path")
+        if not prepare_result.get("ok") or not script_path:
             return
 
-        self.play_done_sound()
-        choice = QMessageBox.question(
-            self,
-            "准备安装",
-            prepare_result.get("message", "更新包已准备完成。") + "\n\n点击“是”后软件会退出，并自动安装新版。",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
-        )
-        if choice != QMessageBox.Yes:
-            return
-
+        self.update_prepare_result = None
+        if self.update_progress_dialog:
+            self.update_progress_dialog.restart_button.setEnabled(False)
         self.force_quit = True
         if self.tray_icon:
             self.tray_icon.hide()
-        self.update_installer.launch_update_script(prepare_result["script_path"])
+        self.update_installer.launch_update_script(script_path)
         QApplication.quit()
 
     def preload_sounds(self):
