@@ -15,7 +15,7 @@ class UpdateInstaller:
         self.app_name = app_name
         self.timeout = int(timeout)
 
-    def prepare_update(self, update_info):
+    def prepare_update(self, update_info, progress_callback=None):
         download_url = str(update_info.get("download_url", "")).strip()
         expected_sha256 = str(update_info.get("package_sha256", "")).strip().lower()
         latest_version = str(update_info.get("latest_version", "")).strip() or "unknown"
@@ -38,7 +38,8 @@ class UpdateInstaller:
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            self.download_file(download_url, package_path)
+            self.download_file(download_url, package_path, progress_callback)
+            self.emit_progress(progress_callback, "verifying", "正在校验安装包...")
             actual_sha256 = self.file_sha256(package_path)
             if actual_sha256.lower() != expected_sha256:
                 return self.failure(
@@ -49,6 +50,7 @@ class UpdateInstaller:
             if extract_dir.exists():
                 shutil.rmtree(extract_dir)
             extract_dir.mkdir(parents=True, exist_ok=True)
+            self.emit_progress(progress_callback, "extracting", "正在解压更新包...")
             with zipfile.ZipFile(package_path, "r") as archive:
                 archive.extractall(extract_dir)
 
@@ -56,6 +58,7 @@ class UpdateInstaller:
             if not source_dir:
                 return self.failure("安装包结构不正确，未找到 BlackCatAuditAssistant.exe。")
 
+            self.emit_progress(progress_callback, "preparing", "正在准备安装更新...")
             script_path = self.write_update_script(work_dir, source_dir, install_dir, current_exe, os.getpid())
             return {
                 "ok": True,
@@ -68,11 +71,33 @@ class UpdateInstaller:
         except Exception as error:
             return self.failure(f"准备更新失败：{error}")
 
-    def download_file(self, url, target):
+    @staticmethod
+    def emit_progress(progress_callback, stage, message, downloaded_bytes=None, total_bytes=None):
+        if progress_callback is not None:
+            progress_callback({
+                "stage": stage,
+                "message": message,
+                "downloaded_bytes": downloaded_bytes,
+                "total_bytes": total_bytes,
+            })
+
+    def download_file(self, url, target, progress_callback=None):
         request = urllib.request.Request(url, headers={"User-Agent": "BlackCatAuditAssistant-Updater"})
         with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            with target.open("wb") as file:
-                shutil.copyfileobj(response, file)
+            content_length = response.headers.get("Content-Length")
+            total_bytes = int(content_length) if content_length and content_length.isdigit() else None
+            downloaded_bytes = 0
+            with Path(target).open("wb") as file:
+                while chunk := response.read(1024 * 1024):
+                    file.write(chunk)
+                    downloaded_bytes += len(chunk)
+                    self.emit_progress(
+                        progress_callback,
+                        "downloading",
+                        "正在下载更新包...",
+                        downloaded_bytes,
+                        total_bytes,
+                    )
 
     def file_sha256(self, path):
         digest = hashlib.sha256()
