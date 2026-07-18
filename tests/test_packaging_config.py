@@ -1,7 +1,16 @@
+import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
 from core.modules.module_registry import ModuleRegistry
+
+
+APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
+app_spec = importlib.util.spec_from_file_location("self_test_app", APP_PATH)
+app = importlib.util.module_from_spec(app_spec)
+app_spec.loader.exec_module(app)
 
 
 class PortableBuildConfigurationTest(unittest.TestCase):
@@ -25,6 +34,20 @@ class PortableBuildConfigurationTest(unittest.TestCase):
 
         self.assertFalse(result.ok)
         self.assertNotIn("source_path", result.message)
+
+    def test_self_test_exercises_only_pdf_only_label_printing_sample(self):
+        with tempfile.TemporaryDirectory() as temp_name:
+            report_path = Path(temp_name) / "self_test_report.json"
+
+            exit_code = app.run_self_test(report_path)
+
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+
+        check_names = [check["name"] for check in report["checks"]]
+        self.assertEqual(0, exit_code)
+        self.assertTrue(report["ok"])
+        self.assertNotIn("run label_printing sample pdf", check_names)
+        self.assertIn("run pdf_only_trial sample pdf", check_names)
 
     def test_portable_build_uses_resource_collecting_specification(self):
         root = Path(__file__).resolve().parents[1]

@@ -123,11 +123,11 @@ def run_self_test(output_path=None):
                 ws = wb.active
                 ws.append([
                     "参考单号", "SKU", "运输方式", "收件人", "收件电话",
-                    "州", "城市", "地址", "地址2", "收件公司", "收件邮编", "数量", "货架",
+                    "州", "城市", "地址", "地址2", "收件公司", "收件邮编", "数量", "货架", "客户编号",
                 ])
                 ws.append([
                     "SELFTEST001", "SKU001", "宅急便", "山田太郎", "0312345678",
-                    "東京都", "新宿区", "西新宿1-1-1", "101", "SelfTest", "1600023", 1, "1-1",
+                    "東京都", "新宿区", "西新宿1-1-1", "101", "SelfTest", "1600023", 1, "1-1", "12027",
                 ])
                 wb.save(excel_path)
 
@@ -148,58 +148,38 @@ def run_self_test(output_path=None):
                     excel_result.message,
                 )
 
-                label_source_path = temp_dir / "label_source.xlsx"
-                label_finished_path = temp_dir / "label_finished.xlsx"
-                label_output_dir = temp_dir / "label_output"
-
-                wb = Workbook()
-                ws = wb.active
-                ws.append(["客户编号", "参考单号", "SKU", "数量", "货架"])
-                ws.append(["12027", "LABELSELFTEST001", "SKU001", 1, "1-1"])
-                wb.save(label_source_path)
-                wb.close()
-
-                wb = Workbook()
-                ws = wb.active
-                ws.append([
-                    "单号", "收件人电话", "收件邮编", "收件地址", "详细地址", "收件姓名",
-                ])
-                ws.append([
-                    "LABELSELFTEST001", "09012345678", "1000001", "Tokyo", "1-2-3", "Self Test",
-                ])
-                wb.save(label_finished_path)
-                wb.close()
-
-                label_pdf_path = temp_dir / "label_printing_sample.pdf"
+                pdf_only_label_pdf_path = temp_dir / "pdf_only_label_printing_sample.pdf"
+                pdf_only_label_output_dir = temp_dir / "pdf_only_label_output"
                 doc = fitz.open()
                 page = doc.new_page()
-                page.insert_text((72, 72), "TEL 090-1234-5678 a123456789012a")
-                doc.save(label_pdf_path)
+                page.insert_text((72, 72), "TEL a123456789012a LP[2-1/12027]")
+                doc.save(pdf_only_label_pdf_path)
                 doc.close()
 
-                label_result = registry.run("label_printing", {
-                    "source_path": str(label_source_path),
-                    "finished_path": str(label_finished_path),
-                    "pdf_paths": [str(label_pdf_path)],
-                    "output_dir": str(label_output_dir),
+                pdf_only_label_result = registry.run("label_printing", {
+                    "mode": "pdf_only_trial",
+                    "pdf_paths": [str(pdf_only_label_pdf_path)],
+                    "output_dir": str(pdf_only_label_output_dir),
                     "open_after": False,
                 })
-                label_data = label_result.data or {}
-                label_outputs = [Path(path) for path in label_data.get("output_paths", [])]
-                label_page_count = 0
-                if len(label_outputs) == 1 and label_outputs[0].exists():
-                    output_doc = fitz.open(label_outputs[0])
+                pdf_only_label_data = pdf_only_label_result.data or {}
+                pdf_only_label_outputs = [
+                    Path(path) for path in pdf_only_label_data.get("output_paths", [])
+                ]
+                pdf_only_label_page_count = 0
+                if len(pdf_only_label_outputs) == 1 and pdf_only_label_outputs[0].exists():
+                    output_doc = fitz.open(pdf_only_label_outputs[0])
                     try:
-                        label_page_count = output_doc.page_count
+                        pdf_only_label_page_count = output_doc.page_count
                     finally:
                         output_doc.close()
                 record(
-                    "run label_printing sample pdf",
-                    label_result.ok
-                    and len(label_outputs) == 1
-                    and label_outputs[0].name == "全部客户_合并_货架排序.pdf"
-                    and label_page_count == 1,
-                    label_result.message,
+                    "run pdf_only_trial sample pdf",
+                    pdf_only_label_result.ok
+                    and len(pdf_only_label_outputs) == 1
+                    and pdf_only_label_outputs[0].name == "全部客户_合并_货架排序.pdf"
+                    and pdf_only_label_page_count == 1,
+                    pdf_only_label_result.message,
                 )
 
                 pdf_path = temp_dir / "sample_label.pdf"
