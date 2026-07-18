@@ -33,7 +33,7 @@ from modules.scan_check.module import ScanCheckService
 
 
 APP_TITLE = "黑猫审单助手"
-APP_VERSION = "5.0.0"
+APP_VERSION = "5.0.1"
 APP_BRAND = "MADE IN チュウ ビョ"
 SCAN_AUTO_SUBMIT_DELAY_MS = 150
 SCAN_AUTO_SUBMIT_MIN_LENGTH = 4

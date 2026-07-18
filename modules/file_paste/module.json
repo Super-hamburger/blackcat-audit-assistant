@@ -2,7 +2,7 @@
   "id": "file_paste",
   "name_key": "module.file_paste.name",
   "description_key": "module.file_paste.description",
-  "version": "5.0.0",
+  "version": "5.0.1",
   "enabled": true,
   "category": "business"
 }

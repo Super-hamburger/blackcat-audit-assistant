@@ -11,9 +11,9 @@ from ui.main_window import APP_VERSION
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ASSET_ENV = "BLACKCAT_RELEASE_ASSET"
-RELEASE_ASSET_NAME = "BlackCatAuditAssistant_Setup_5.0.0.zip"
+RELEASE_ASSET_NAME = "BlackCatAuditAssistant_Setup_5.0.1.zip"
 RELEASE_ROOT = "BlackCatAuditAssistant"
-EXPECTED_PUBLISHED_AT = "2026-07-18T19:30:00+08:00"
+EXPECTED_PUBLISHED_AT = "2026-07-19T00:05:00+08:00"
 OLD_RELEASE_TEXT = ("尚未上传 GitHub", "自动更新尚不可用")
 
 
@@ -31,33 +31,41 @@ def sha256_file(path):
 
 
 class ReleaseMetadataTests(unittest.TestCase):
-    def test_v5_0_0_metadata_contract(self):
+    def test_v5_0_1_metadata_contract(self):
         version = load_json("version.json")
         changelog = load_json("data/changelog.json")
         manifest = load_json("updater/update_manifest.example.json")
         file_paste_module = load_json("modules/file_paste/module.json")
         label_printing_module = load_json("modules/label_printing/module.json")
-        release_notes_path = PROJECT_ROOT / "docs/RELEASE_5.0.0.md"
+        release_notes_path = PROJECT_ROOT / "docs/RELEASE_5.0.1.md"
 
-        self.assertEqual("5.0.0", APP_VERSION)
-        self.assertEqual("5.0.0", version["version"])
-        self.assertEqual("5.0.0", version["engine_version"])
-        self.assertEqual("5.0.0", version["ui_version"])
-        self.assertEqual("5.0.0", manifest["latest_version"])
+        self.assertEqual("5.0.1", APP_VERSION)
+        self.assertEqual("5.0.1", version["version"])
+        self.assertEqual("5.0.1", version["engine_version"])
+        self.assertEqual("5.0.1", version["ui_version"])
+        self.assertIn("v5.0.1", version["build"])
+        self.assertEqual("5.0.1", manifest["latest_version"])
+        self.assertEqual(
+            f"https://github.com/Super-hamburger/blackcat-audit-assistant/releases/download/v5.0.1/{RELEASE_ASSET_NAME}",
+            manifest["download_url"],
+        )
         self.assertEqual(64, len(manifest["package_sha256"]))
         self.assertIsNotNone(re.fullmatch(r"[0-9a-f]{64}", manifest["package_sha256"]))
         release_notes = release_notes_path.read_text(encoding="utf-8")
         release_notes_hash = re.search(r"SHA256：`([0-9a-f]{64})`", release_notes)
         self.assertIsNotNone(release_notes_hash)
         self.assertEqual(manifest["package_sha256"], release_notes_hash.group(1))
-        self.assertIn("5.0.0", release_notes)
+        self.assertIn("5.0.1", release_notes)
+        self.assertIn(RELEASE_ASSET_NAME, release_notes)
         self.assertIn("自动更新", release_notes)
-        self.assertIn("5.0.0 已正式发布", manifest["message"])
+        self.assertIn("5.0.1 已正式发布", manifest["message"])
         self.assertIn("自动更新", manifest["message"])
         self.assertEqual(EXPECTED_PUBLISHED_AT, manifest["published_at"])
-        self.assertEqual("5.0.0", file_paste_module["version"])
-        self.assertEqual("5.0.0", label_printing_module["version"])
-        self.assertEqual("V5.0.0", changelog[0]["version"])
+        self.assertEqual("5.0.1", file_paste_module["version"])
+        self.assertEqual("5.0.1", label_printing_module["version"])
+        self.assertEqual("V5.0.1", changelog[0]["version"])
+        self.assertTrue(changelog[0]["current"])
+        self.assertIn("软件更新", "".join(changelog[0]["improved"]))
         self.assertEqual(1, sum(entry.get("current", False) for entry in changelog))
 
     @unittest.skipUnless(
@@ -67,7 +75,7 @@ class ReleaseMetadataTests(unittest.TestCase):
     def test_release_asset_contract_when_explicitly_requested(self):
         package_path = Path(os.environ[RELEASE_ASSET_ENV])
         manifest = load_json("updater/update_manifest.example.json")
-        release_notes = (PROJECT_ROOT / "docs/RELEASE_5.0.0.md").read_text(encoding="utf-8")
+        release_notes = (PROJECT_ROOT / "docs/RELEASE_5.0.1.md").read_text(encoding="utf-8")
 
         self.assertEqual(RELEASE_ASSET_NAME, package_path.name)
         self.assertTrue(package_path.is_file(), f"Release package is required: {package_path}")
@@ -91,8 +99,9 @@ class ReleaseMetadataTests(unittest.TestCase):
             )
 
         embedded_text = json.dumps(embedded_manifest, ensure_ascii=False)
-        self.assertEqual("5.0.0", embedded_manifest["latest_version"])
-        self.assertIn("5.0.0 已正式发布", embedded_manifest["message"])
+        self.assertEqual("5.0.1", embedded_manifest["latest_version"])
+        self.assertEqual(manifest["download_url"], embedded_manifest["download_url"])
+        self.assertIn("5.0.1 已正式发布", embedded_manifest["message"])
         self.assertIn("自动更新", embedded_manifest["message"])
         self.assertEqual(EXPECTED_PUBLISHED_AT, embedded_manifest["published_at"])
         self.assertEqual("", embedded_manifest["package_sha256"])
